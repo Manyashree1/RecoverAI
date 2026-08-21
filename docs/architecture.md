@@ -68,4 +68,10 @@ The AI provider (or its deterministic fallback) only ever produces a `{action, c
 | `policyEngine` (unchanged since Increment 03) | ALLOW/BLOCK against merchant-defined limits | Cannot be influenced by AI confidence alone; every numeric limit is a separate, explicit check |
 | Execution service | Revalidating policy, atomically reserving an allowed action, and calling the TEST payment-link adapter | Cannot retry the original payment, mark revenue recovered, or execute unsupported actions |
 
+## Measurement ownership
+
+`AnalyticsService` is the single owner of business metric calculations. `AnalyticsRepository` loads only the authenticated merchant's Payment, RecoveryCase, RecoveryAction, and AuditEvent records; the controller never accepts a merchant ID from the request. Revenue at risk is the value of failed payments with open cases. Recovered revenue requires a positive case amount, an executed provider-referenced action, and a Razorpay-authored `RECOVERY_COMPLETED` event. A created Payment Link, recommendation, policy decision, or successful link-creation response is not recovery evidence.
+
+The `GET /api/analytics/overview` response also includes counts by existing recovery action, failure category, and recovery status so a future dashboard can visualize performance without duplicating financial logic in the frontend.
+
 See `docs/development-log.md` for the increment-by-increment history and `README.md` for setup and API details.

@@ -11,6 +11,8 @@ const { createRecoveryCaseController } = require('../src/controllers/recoveryCas
 const { createRecoveryCaseRouter } = require('../src/routes/recoveryCaseRoutes');
 const { createAuditEventController } = require('../src/controllers/auditEventController');
 const { createAuditEventRouter } = require('../src/routes/auditEventRoutes');
+const { createAnalyticsController } = require('../src/controllers/analyticsController');
+const { createAnalyticsRouter } = require('../src/routes/analyticsRoutes');
 const { RecoveryRecommendationService } = require('../src/services/recoveryRecommendationService');
 const {
   createStore,
@@ -39,7 +41,23 @@ async function startTestServer() {
       controller: createRecoveryCaseController({ repository: readRepository, recommendationService }),
       requireAuth
     }),
-    auditEventRouter: createAuditEventRouter({ controller: createAuditEventController({ repository: readRepository }), requireAuth })
+    auditEventRouter: createAuditEventRouter({ controller: createAuditEventController({ repository: readRepository }), requireAuth }),
+    analyticsRouter: createAnalyticsRouter({
+      controller: createAnalyticsController({
+        analyticsService: {
+          overview: async (merchantId) => {
+            const { calculateOverview } = require('../src/services/analyticsService');
+            return calculateOverview({
+              payments: store.payments.filter((payment) => payment.merchant === merchantId),
+              recoveryCases: store.recoveryCases.filter((recoveryCase) => recoveryCase.merchant === merchantId),
+              recoveryActions: store.recoveryActions.filter((action) => action.merchant === merchantId),
+              auditEvents: store.auditEvents.filter((event) => event.merchant === merchantId)
+            });
+          }
+        }
+      }),
+      requireAuth
+    })
   });
 
   const server = app.listen(0);
@@ -124,6 +142,42 @@ test('merchant-scoped payments and recovery cases', async (t) => {
     const body = await response.json();
     assert.equal(body.data.payment.id, 'payment_m1');
     assert.equal(body.data.payment.amount, 200000);
+  });
+});
+
+test('merchant-scoped analytics excludes another merchant data', async (t) => {
+  const { server, baseUrl, store, authService } = await startTestServer();
+  t.after(() => server.close());
+
+  await seedMerchantWithUser(store, authService, { merchantId: 'merchant_1', email: 'analytics1@example.com', password: 'correct horse 1' });
+  await seedMerchantWithUser(store, authService, { merchantId: 'merchant_2', email: 'analytics2@example.com', password: 'correct horse 2' });
+  store.payments.push(buildPayment({ _id: 'analytics_payment_1', merchant: 'merchant_1', amount: 10000 }));
+  store.payments.push(buildPayment({ _id: 'analytics_payment_2', merchant: 'merchant_2', amount: 90000 }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'analytics_case_1', merchant: 'merchant_1', payment: 'analytics_payment_1' }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'analytics_case_2', merchant: 'merchant_2', payment: 'analytics_payment_2' }));
+
+  const response = await fetch(`${baseUrl}/api/analytics/overview`, {
+    headers: { authorization: `Bearer ${tokenFor(authService, { userId: 'user_merchant_1', merchantId: 'merchant_1' })}` }
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    data: {
+      revenueAtRisk: 10000,
+      eligibleRecoveryCases: 1,
+      recoveryAttempts: 0,
+      successfulRecoveries: 0,
+      recoveredRevenue: 0,
+      recoveryRate: 0,
+      recoveryValueRate: 0,
+      blockedActions: 0,
+      failedExecutions: 0,
+      aiFallbacks: 0,
+      breakdown: {
+        recoveryAction: {},
+        failureCategory: { TEMPORARY: 1 },
+        recoveryStatus: { DETECTED: 1 }
+      }
+    }
   });
 });
 

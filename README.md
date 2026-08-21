@@ -1,6 +1,6 @@
 # RecoverAI
 
-RecoverAI is a merchant-facing, policy-gated recovery service for failed payments. This repository currently contains the backend foundation plus an AI-assisted (with a deterministic fallback) recommendation stage. It has no frontend, dashboard, execution worker, synthetic data, or evaluation pipeline yet.
+RecoverAI is a merchant-facing, policy-gated recovery service for failed payments. This repository contains the backend foundation plus AI-assisted recommendations, bounded Razorpay TEST MODE execution, and truthful persisted-state measurement. It has no React frontend yet.
 
 ## What exists
 
@@ -10,7 +10,8 @@ RecoverAI is a merchant-facing, policy-gated recovery service for failed payment
 - Merchant authentication (`MerchantUser` + JWT) and merchant-scoped read APIs for payments, recovery cases, and audit events.
 - An AI-assisted recovery recommendation stage with a pluggable provider abstraction and an always-available deterministic fallback (see [AI-assisted recovery recommendation](#ai-assisted-recovery-recommendation) below).
 - A pure deterministic policy evaluator that gates every recommendation before execution.
-- A Razorpay TEST MODE adapter boundary. It refuses missing/non-test credentials and does not execute a payment yet.
+- A Razorpay TEST MODE adapter boundary for bounded Payment Link recovery execution.
+- Merchant-scoped analytics derived from persisted payments, recovery cases, actions, and audit evidence.
 - A raw-body, HMAC-verified Razorpay payment webhook endpoint with a durable event ledger and atomic payment/case/audit updates.
 
 ## Minimal V1 architecture
@@ -45,7 +46,7 @@ Application code — not the AI — owns policy validation, idempotency, permiss
 | `POST /api/recovery-actions/:id/execute` | Create a bounded Razorpay TEST payment-link reminder after policy revalidation. |
 | `GET /api/analytics/overview` | Merchant-scoped truthful recovery measurement and breakdowns. |
 
-Not yet implemented: `GET/PUT /api/recovery-policy` (policy management UI), payment-link outcome ingestion, and recovered-revenue measurement.
+Not yet implemented: `GET/PUT /api/recovery-policy` (policy management UI), payment-link outcome ingestion, and a React merchant dashboard.
 
 All routes above except `/health` and `/webhooks/razorpay` require `Authorization: Bearer <token>` from `/api/auth/login`, and are scoped to the authenticated merchant only.
 
@@ -219,9 +220,15 @@ Sources: [Payments API](https://razorpay.com/docs/api/payments/), [standard paym
 
 Recommendation-only use does not require Razorpay API credentials. To execute a payment-link reminder, set `RAZORPAY_KEY_ID` (only an `rzp_test_` key) and `RAZORPAY_KEY_SECRET`; never commit `.env` or use production credentials.
 
+## Analytics and demo data
+
+`GET /api/analytics/overview` returns merchant-scoped revenue-at-risk, eligibility, execution, recovery, policy, fallback, and action/failure/status breakdown metrics. Recovered revenue is counted only when a case has a positive `recoveredAmount`, an executed action with a provider reference, and a Razorpay-authored `RECOVERY_COMPLETED` audit event. Payment Link creation alone is never recovery evidence.
+
+For development-only deterministic demo data, set `DEMO_ADMIN_PASSWORD` and run `node scripts/seedDemoData.js`. The seed uses stable upsert keys, hashes the password through `AuthService`, and deliberately seeds no recovered revenue because provider-confirmed Payment Link outcome ingestion is not implemented.
+
 ## Next increment
 
-Ingest a provider-confirmed outcome for a recovery payment link and only then measure recovered revenue. See `docs/recovery-execution.md` for the current bounded execution lifecycle.
+Build the React merchant dashboard against the analytics endpoint. A later provider-outcome ingestion increment can add genuine recovered-revenue records without changing the measurement rules.
 
 ## Current technical risks / unknowns
 

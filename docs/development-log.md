@@ -75,3 +75,5 @@ The server reloads merchant-owned context, reruns the deterministic policy gate,
 ## Increment 06 — Measurement
 
 Added `GET /api/analytics/overview`, authenticated and scoped only by the merchant in the verified JWT. It derives metrics and breakdowns directly from persisted payments, cases, actions, and audit events. Recovery value is intentionally zero unless a recovered case has a positive amount, an executed provider-referenced action, and a Razorpay `RECOVERY_COMPLETED` audit event. The deterministic development seed creates useful non-recovered scenarios only. See `docs/analytics-and-measurement.md`.
+
+Focused coverage includes authenticated endpoint isolation, zero-safe rates, blocked-versus-executed action counts, failed execution handling, and stable demo-seed selectors. The next increment is the React merchant dashboard; provider-confirmed Payment Link outcome ingestion remains the prerequisite for any genuine recovered-revenue records.

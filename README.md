@@ -1,6 +1,6 @@
 # RecoverAI
 
-RecoverAI is a merchant-facing, policy-gated recovery service for failed payments. This repository contains the backend foundation plus AI-assisted recommendations, bounded Razorpay TEST MODE execution, and truthful persisted-state measurement. It has no React frontend yet.
+RecoverAI is a merchant-facing, policy-gated recovery service for failed payments. This repository contains the backend foundation plus AI-assisted recommendations, bounded Razorpay TEST MODE execution, truthful persisted-state measurement, and a React merchant console.
 
 ## What exists
 
@@ -12,6 +12,7 @@ RecoverAI is a merchant-facing, policy-gated recovery service for failed payment
 - A pure deterministic policy evaluator that gates every recommendation before execution.
 - A Razorpay TEST MODE adapter boundary for bounded Payment Link recovery execution.
 - Merchant-scoped analytics derived from persisted payments, recovery cases, actions, and audit evidence.
+- A Vite + React merchant console for the command center, payment operations, recovery cases, actions, and audit trail.
 - A raw-body, HMAC-verified Razorpay payment webhook endpoint with a durable event ledger and atomic payment/case/audit updates.
 
 ## Minimal V1 architecture
@@ -46,7 +47,7 @@ Application code — not the AI — owns policy validation, idempotency, permiss
 | `POST /api/recovery-actions/:id/execute` | Create a bounded Razorpay TEST payment-link reminder after policy revalidation. |
 | `GET /api/analytics/overview` | Merchant-scoped truthful recovery measurement and breakdowns. |
 
-Not yet implemented: `GET/PUT /api/recovery-policy` (policy management UI), payment-link outcome ingestion, and a React merchant dashboard.
+Not yet implemented: `GET/PUT /api/recovery-policy` (policy management UI) and payment-link outcome ingestion.
 
 All routes above except `/health` and `/webhooks/razorpay` require `Authorization: Bearer <token>` from `/api/auth/login`, and are scoped to the authenticated merchant only.
 
@@ -226,9 +227,15 @@ Recommendation-only use does not require Razorpay API credentials. To execute a 
 
 For development-only deterministic demo data, set `DEMO_ADMIN_PASSWORD` and run `node scripts/seedDemoData.js`. The seed uses stable upsert keys, hashes the password through `AuthService`, and deliberately seeds no recovered revenue because provider-confirmed Payment Link outcome ingestion is not implemented.
 
+## React merchant console
+
+The frontend lives in `frontend/` and consumes the existing merchant-scoped APIs. Run the backend in one terminal with `npm run dev`, then run the console in another with `cd frontend` and `npm run dev`. Open `http://localhost:5173/login`; Vite proxies `/api` requests to the backend at `http://localhost:3000`.
+
+See [docs/frontend.md](docs/frontend.md) for the screen map, authentication flow, API dependencies, and demo path.
+
 ## Next increment
 
-Build the React merchant dashboard against the analytics endpoint. A later provider-outcome ingestion increment can add genuine recovered-revenue records without changing the measurement rules.
+A later provider-outcome ingestion increment can add genuine recovered-revenue records without changing the measurement rules.
 
 ## Current technical risks / unknowns
 

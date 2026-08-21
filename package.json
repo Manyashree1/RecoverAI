@@ -1,0 +1,26 @@
+{
+  "name": "recoverai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Foundation for RecoverAI, a policy-gated failed-payment recovery service.",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/services/analyticsService.js && node --check src/repositories/analyticsRepository.js && node --check src/controllers/analyticsController.js && node --check src/routes/analyticsRoutes.js && node --check scripts/seedDemoData.js && node --check src/services/recoveryExecutionService.js && node --check src/services/razorpay/razorpayTestClient.js && node --check src/app.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

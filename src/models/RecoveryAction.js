@@ -27,10 +27,14 @@ const recoveryActionSchema = new mongoose.Schema(
     execution: {
       provider: { type: String, enum: ['RAZORPAY_TEST', 'WORKFLOW'], default: 'WORKFLOW' },
       providerReference: { type: String, trim: true },
+      shortUrl: { type: String, trim: true },
+      providerStatus: { type: String, trim: true },
+      providerPaymentId: { type: String, trim: true },
       idempotencyKey: { type: String, trim: true },
       result: { type: String, trim: true },
       error: { type: String, trim: true },
-      executedAt: { type: Date }
+      executedAt: { type: Date },
+      confirmedAt: { type: Date }
     }
   },
   { timestamps: true }

@@ -2,12 +2,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { WebhookIngestionService } = require('../src/services/webhookIngestionService');
 const { PAYMENT_STATUS, AUDIT_EVENT_TYPE } = require('../src/constants/enums');
-const { failedPaymentEvent, capturedPaymentEvent } = require('./fixtures/razorpayPaymentEvents');
+const { failedPaymentEvent, capturedPaymentEvent, paymentLinkPaidEvent } = require('./fixtures/razorpayPaymentEvents');
 const { InMemoryWebhookRepository, InMemoryTransactionRunner, duplicateKeyError } = require('./helpers/inMemoryWebhookRepository');
+const { calculateOverview } = require('../src/services/analyticsService');
 
 function createService(options) {
   const repository = new InMemoryWebhookRepository(options);
   return { repository, service: new WebhookIngestionService({ repository, transactionRunner: new InMemoryTransactionRunner(repository) }) };
+}
+
+function seedExecutedRecovery(repository, { merchantId = 'merchant_001', actionId = 'action_001', paymentId = 'payment_recovery_001', caseId = 'case_recovery_001' } = {}) {
+  repository.state.payments.push({ _id: paymentId, merchant: merchantId, amount: 499900, currency: 'INR', status: 'FAILED', failure: { code: 'insufficient_funds' } });
+  repository.state.recoveryCases.push({ _id: caseId, merchant: merchantId, payment: paymentId, status: 'ACTION_PENDING', recoveredAmount: 0, retryCount: 0, customerContactAttempts: 1 });
+  repository.state.recoveryActions.push({ _id: actionId, merchant: merchantId, payment: paymentId, recoveryCase: caseId, type: 'CUSTOMER_REMINDER', status: 'EXECUTED', execution: { provider: 'RAZORPAY_TEST', providerReference: 'plink_001', result: 'PAYMENT_LINK_CREATED' } });
 }
 
 test('valid failed payment creates payment, recovery case, and audit trail', async () => {
@@ -109,6 +116,91 @@ test('duplicate-key conflict for an already-recorded provider event is handled g
   assert.equal(result.duplicate, true);
   assert.equal(repository.state.payments.length, 0);
   assert.equal(repository.state.recoveryCases.length, 0);
+});
+
+test('valid Payment Link confirmation recovers the correlated case with provider amount', async () => {
+  const { repository, service } = createService();
+  seedExecutedRecovery(repository);
+
+  const result = await service.ingestRazorpayPaymentEvent({
+    providerEventId: 'evt_recovery_paid_001',
+    payload: paymentLinkPaidEvent({ referenceId: 'ra_action_001', amountPaid: 510000 })
+  });
+
+  assert.equal(result.recovered, true);
+  assert.equal(repository.state.recoveryActions[0].execution.result, 'PAYMENT_CONFIRMED');
+  assert.equal(repository.state.recoveryActions[0].execution.providerPaymentId, 'pay_recovery_001');
+  assert.equal(repository.state.payments[0].status, 'CAPTURED');
+  assert.equal(repository.state.recoveryCases[0].status, 'RECOVERED');
+  assert.equal(repository.state.recoveryCases[0].recoveredAmount, 510000);
+  assert.equal(repository.state.auditEvents[0].type, AUDIT_EVENT_TYPE.RECOVERY_COMPLETED);
+  assert.equal(repository.state.auditEvents[0].actor, 'RAZORPAY');
+});
+
+test('duplicate Payment Link confirmation is idempotent and counted once', async () => {
+  const { repository, service } = createService();
+  seedExecutedRecovery(repository);
+  const input = { providerEventId: 'evt_recovery_paid_002', payload: paymentLinkPaidEvent({ referenceId: 'ra_action_001', paymentId: 'pay_recovery_002', amountPaid: 510000 }) };
+
+  await service.ingestRazorpayPaymentEvent(input);
+  const result = await service.ingestRazorpayPaymentEvent(input);
+  const metrics = calculateOverview(repository.state);
+
+  assert.equal(result.duplicate, true);
+  assert.equal(repository.state.recoveryCases[0].recoveredAmount, 510000);
+  assert.equal(repository.state.auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED).length, 1);
+  assert.equal(metrics.successfulRecoveries, 1);
+  assert.equal(metrics.recoveredRevenue, 510000);
+});
+
+test('duplicate Payment Link confirmation repairs a stale payment status after an earlier partial confirmation', async () => {
+  const { repository, service } = createService();
+  seedExecutedRecovery(repository);
+  repository.state.recoveryActions[0].execution.providerPaymentId = 'pay_recovery_001';
+  repository.state.recoveryActions[0].execution.result = 'PAYMENT_CONFIRMED';
+  repository.state.recoveryCases[0].status = 'RECOVERED';
+  repository.state.recoveryCases[0].recoveredAmount = 510000;
+  repository.state.auditEvents.push({ type: AUDIT_EVENT_TYPE.RECOVERY_COMPLETED, providerEventId: 'evt_recovery_paid_replay_001' });
+
+  const input = { providerEventId: 'evt_recovery_paid_replay_001', payload: paymentLinkPaidEvent({ referenceId: 'ra_action_001', amountPaid: 510000 }) };
+  await service.ingestRazorpayPaymentEvent(input);
+  repository.state.payments[0].status = 'FAILED';
+  repository.state.webhookEvents[0].providerEventId = 'evt_recovery_paid_replay_001';
+
+  const result = await service.ingestRazorpayPaymentEvent(input);
+
+  assert.equal(result.duplicate, true);
+  assert.equal(repository.state.payments[0].status, 'CAPTURED');
+  assert.equal(repository.state.auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED).length, 1);
+});
+
+test('unrelated successful Payment Link never creates or recovers a case', async () => {
+  const { repository, service } = createService();
+
+  const result = await service.ingestRazorpayPaymentEvent({
+    providerEventId: 'evt_unrelated_link_paid_001',
+    payload: paymentLinkPaidEvent({ referenceId: 'ra_not_ours', paymentId: 'pay_unrelated_001' })
+  });
+
+  assert.equal(result.ignored, true);
+  assert.equal(repository.state.payments.length, 0);
+  assert.equal(repository.state.recoveryCases.length, 0);
+  assert.equal(repository.state.recoveryActions.length, 0);
+  assert.equal(repository.state.auditEvents.length, 0);
+});
+
+test('Payment Link confirmation cannot recover an action belonging to another merchant', async () => {
+  const { repository, service } = createService();
+  seedExecutedRecovery(repository, { merchantId: 'merchant_002', actionId: 'action_002', paymentId: 'payment_other', caseId: 'case_other' });
+
+  const result = await service.ingestRazorpayPaymentEvent({
+    providerEventId: 'evt_cross_merchant_link_paid_001',
+    payload: paymentLinkPaidEvent({ referenceId: 'ra_action_002', paymentLinkId: 'plink_001' })
+  });
+
+  assert.equal(result.ignored, true);
+  assert.equal(repository.state.recoveryCases[0].status, 'ACTION_PENDING');
+  assert.equal(repository.state.recoveryCases[0].recoveredAmount, 0);
 });
 
 test('transaction rollback leaves no partial payment or case when audit persistence fails', async () => {

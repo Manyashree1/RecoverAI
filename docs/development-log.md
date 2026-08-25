@@ -81,3 +81,7 @@ Focused coverage includes authenticated endpoint isolation, zero-safe rates, blo
 ## Increment 07 — React merchant console
 
 Added a Vite + React frontend in `frontend/` without changing backend authorization, webhook verification, AI safety boundaries, policy rules, or execution logic. The console includes login, the Recovery Command Center, payment operations, payment and recovery detail, recovery cases, action intelligence, and audit exploration. It consumes the existing merchant-scoped APIs through one authenticated client, uses only persisted backend values, and makes the recommendation → policy → execution → evidence distinction explicit. See `docs/frontend.md`.
+
+## Increment 08 — Provider-confirmed recovery
+
+Added support for Razorpay TEST MODE `payment_link.paid` webhooks. Existing HMAC verification, provider event idempotency, and MongoDB transactions remain unchanged. The Payment Link's deterministic `reference_id` (`ra_<RecoveryActionId>`) plus the stored provider link ID identify one merchant-scoped executed `CUSTOMER_REMINDER`; verified `amount_paid` then marks its action `PAYMENT_CONFIRMED`, marks its case `RECOVERED`, records the provider payment ID, and writes `RECOVERY_COMPLETED`. Unrelated links are acknowledged without creating recovery records, and duplicate events cannot increase recovered revenue.

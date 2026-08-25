@@ -16,7 +16,7 @@ Payment Link creation, AI recommendations, policy approval, and execution comple
 
 ## Development demo seed
 
-Run `set DEMO_ADMIN_PASSWORD=<strong local password>` then `node scripts/seedDemoData.js`. It is disabled in production, hashes the password through the existing auth service, and uses stable ids/upserts. It creates temporary, policy-blocked, retry-limit, fallback-labelled, and provider-failure scenarios. It deliberately seeds **no recovered revenue** because current code does not ingest a provider-confirmed Payment Link payment outcome.
+Run `set DEMO_ADMIN_PASSWORD=<strong local password>` then `node scripts/seedDemoData.js`. It is disabled in production, hashes the password through the existing auth service, and uses stable ids/upserts. It also configures only the RecoverAI Demo Merchant with a reminder-only policy and a `0.6` minimum confidence, preserving the deterministic confidence check. It creates temporary, policy-blocked, retry-limit, fallback-labelled, and provider-failure scenarios. It deliberately seeds **no recovered revenue**; a verified provider-confirmed Payment Link payment outcome is still required.
 
 Call the endpoint with `Authorization: Bearer <merchant JWT>`:
 
@@ -24,4 +24,4 @@ Call the endpoint with `Authorization: Bearer <merchant JWT>`:
 GET /api/analytics/overview
 ```
 
-The next increment can use this response directly in React, then add linked provider-outcome ingestion to make genuine recovery measurement possible.
+The React dashboard can use this response directly. Genuine recovered revenue becomes nonzero only after a verified `payment_link.paid` event is correlated to an executed RecoverAI Payment Link action.

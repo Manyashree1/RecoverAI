@@ -36,7 +36,7 @@ Application code — not the AI — owns policy validation, idempotency, permiss
 | Route | Purpose |
 | --- | --- |
 | `GET /api/health` | Service health check. |
-| `POST /api/webhooks/razorpay` | Verify and ingest Razorpay TEST payment webhooks. |
+| `POST /api/webhooks/razorpay` | Verify and ingest Razorpay TEST payment and Payment Link webhooks. |
 | `POST /api/auth/login` | Exchange merchant-admin email + password for a session token. |
 | `GET /api/payments?status=FAILED&page=&limit=` | List merchant payments at risk. |
 | `GET /api/payments/:id` | Payment detail. |
@@ -47,7 +47,7 @@ Application code — not the AI — owns policy validation, idempotency, permiss
 | `POST /api/recovery-actions/:id/execute` | Create a bounded Razorpay TEST payment-link reminder after policy revalidation. |
 | `GET /api/analytics/overview` | Merchant-scoped truthful recovery measurement and breakdowns. |
 
-Not yet implemented: `GET/PUT /api/recovery-policy` (policy management UI) and payment-link outcome ingestion.
+Not yet implemented: `GET/PUT /api/recovery-policy` (policy management UI).
 
 All routes above except `/health` and `/webhooks/razorpay` require `Authorization: Bearer <token>` from `/api/auth/login`, and are scoped to the authenticated merchant only.
 
@@ -86,6 +86,7 @@ Webhook ingestion enforces the Payment transitions `CREATED → FAILED/AUTHORIZE
 - `payment.failed` — creates/updates a failed Payment and creates one RecoveryCase when needed.
 - `payment.authorized` — records an authorized Payment; it does not create a RecoveryCase.
 - `payment.captured` — records a captured Payment; it does not create a RecoveryCase and closes an existing one if a later capture follows a failure.
+- `payment_link.paid` — confirms a payment made through a RecoverAI-created Payment Link and marks only the correlated recovery execution/case as recovered.
 
 Other verified Razorpay events are acknowledged as `ignored`; no business data is created for them.
 

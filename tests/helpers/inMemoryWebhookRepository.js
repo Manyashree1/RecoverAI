@@ -5,6 +5,7 @@ class InMemoryWebhookRepository {
       customers: [],
       payments: [],
       recoveryCases: [],
+      recoveryActions: [],
       auditEvents: [],
       webhookEvents: []
     };
@@ -40,6 +41,38 @@ class InMemoryWebhookRepository {
 
   async findPaymentByRazorpayPaymentId(razorpayPaymentId) {
     return this.state.payments.find((payment) => payment.razorpayPaymentId === razorpayPaymentId);
+  }
+
+  async findRecoveryActionByReference({ merchantId, referenceId, paymentLinkId }) {
+    const actionId = referenceId.startsWith('ra_') ? referenceId.slice(3) : '';
+    const action = this.state.recoveryActions.find((candidate) => candidate._id === actionId && candidate.merchant === merchantId && candidate.type === 'CUSTOMER_REMINDER' && candidate.status === 'EXECUTED' && candidate.execution?.provider === 'RAZORPAY_TEST' && candidate.execution?.providerReference === paymentLinkId);
+    if (!action) return null;
+    return {
+      action,
+      recoveryCase: this.state.recoveryCases.find((candidate) => candidate._id === action.recoveryCase && candidate.merchant === merchantId),
+      payment: this.state.payments.find((candidate) => candidate._id === action.payment && candidate.merchant === merchantId)
+    };
+  }
+
+  async confirmRecovery({ merchantId, actionId, providerPaymentId, amount, currency }) {
+    const action = this.state.recoveryActions.find((candidate) => candidate._id === actionId && candidate.merchant === merchantId && candidate.status === 'EXECUTED' && candidate.execution?.result === 'PAYMENT_LINK_CREATED' && !candidate.execution?.providerPaymentId);
+    if (!action) return { confirmed: false };
+    const payment = this.state.payments.find((candidate) => candidate._id === action.payment && candidate.merchant === merchantId);
+    if (!payment) throw new Error('Payment could not be completed for the confirmed payment link.');
+    Object.assign(payment, { status: 'CAPTURED', amount, currency });
+    const recoveryCase = this.state.recoveryCases.find((candidate) => candidate._id === action.recoveryCase && candidate.merchant === merchantId && !['RECOVERED', 'CLOSED'].includes(candidate.status) && candidate.recoveredAmount === 0);
+    if (!recoveryCase) throw new Error('Recovery case could not be completed for the confirmed payment.');
+    Object.assign(action.execution, { providerPaymentId, result: 'PAYMENT_CONFIRMED', confirmedAt: new Date() });
+    Object.assign(recoveryCase, { status: 'RECOVERED', recoveredAmount: amount, resolvedAt: new Date() });
+    return { confirmed: true, action, recoveryCase, payment };
+  }
+
+  async reconcileConfirmedRecovery({ merchantId, actionId, providerPaymentId, amount, currency }) {
+    const action = this.state.recoveryActions.find((candidate) => candidate._id === actionId && candidate.merchant === merchantId && candidate.status === 'EXECUTED' && candidate.execution?.result === 'PAYMENT_CONFIRMED' && candidate.execution?.providerPaymentId === providerPaymentId);
+    if (!action) return { reconciled: false };
+    const payment = this.state.payments.find((candidate) => candidate._id === action.payment && candidate.merchant === merchantId);
+    if (payment.status !== 'CAPTURED') Object.assign(payment, { status: 'CAPTURED', amount, currency });
+    return { reconciled: true, payment };
   }
 
   async resolveCustomer(merchantId, payment) {

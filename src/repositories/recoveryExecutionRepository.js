@@ -30,10 +30,10 @@ class RecoveryExecutionRepository {
     );
   }
 
-  async markExecuted({ merchantId, actionId, executionKey, providerReference }, session) {
+  async markExecuted({ merchantId, actionId, executionKey, providerReference, shortUrl, status }, session) {
     return RecoveryAction.findOneAndUpdate(
       { _id: actionId, merchant: merchantId, status: 'EXECUTING', 'execution.idempotencyKey': executionKey },
-      { status: 'EXECUTED', 'execution.providerReference': providerReference, 'execution.result': 'PAYMENT_LINK_CREATED', 'execution.executedAt': new Date() },
+      { status: 'EXECUTED', 'execution.providerReference': providerReference, 'execution.shortUrl': shortUrl, 'execution.providerStatus': status, 'execution.result': 'PAYMENT_LINK_CREATED', 'execution.executedAt': new Date() },
       { new: true, session, runValidators: true }
     );
   }

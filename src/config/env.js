@@ -8,6 +8,7 @@ const env = Object.freeze({
   mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/recoverai',
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
+  razorpayAccountId: process.env.RAZORPAY_ACCOUNT_ID,
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
   // Signs merchant-admin session tokens. The insecure fallback only exists so
   // `npm run dev` boots without setup; production must set a long random value.

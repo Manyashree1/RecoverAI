@@ -25,7 +25,7 @@ The backend reloads the action, case, payment, customer, and current merchant po
 
 The provider call is deliberately outside the transaction; holding a transaction over a network call risks expiry. The reservation commits first, then completion/failure is finalized transactionally. A timeout remains `FAILED` and is not automatically retried because Razorpay might have received the request.
 
-Creating a link increments `customerContactAttempts`, marks the case `ACTION_PENDING`, and stores the provider link ID. It does **not** change the original Payment from `FAILED`, set `recoveredAmount`, or claim recovered revenue. A future provider-confirmed event is required.
+Creating a link increments `customerContactAttempts`, marks the case `ACTION_PENDING`, and stores the provider link ID. It does **not** change the original Payment from `FAILED`, set `recoveredAmount`, or claim recovered revenue. A verified `payment_link.paid` event is required. That event must contain the Payment Link `reference_id` (`ra_<RecoveryActionId>`), the provider link ID, and provider payment evidence; only then is the executed action marked `PAYMENT_CONFIRMED` and the case marked `RECOVERED` with the provider's `amount_paid`.
 
 ## Run
 

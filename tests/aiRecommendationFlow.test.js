@@ -84,3 +84,43 @@ test('repeated recommendation requests for an unchanged case remain idempotent w
   assert.equal(first.recoveryAction.id, second.recoveryAction.id);
   assert.equal(store.recoveryActions.length, 1);
 });
+
+test('a failed action can create one new policy-gated recovery attempt without changing the old action', async () => {
+  const { store, service } = createService({ primaryProvider: null });
+  store.payments.push(buildPayment({ _id: 'p6', merchant: 'm1', amount: 75000 }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'c6', merchant: 'm1', payment: 'p6', retryCount: 2 }));
+  store.policies.push(buildPolicy({ merchant: 'm1', allowedActions: ['CUSTOMER_REMINDER'], minimumRecoveryConfidence: 0.6 }));
+  store.recoveryActions.push({
+    _id: 'old_action', merchant: 'm1', payment: 'p6', recoveryCase: 'c6', type: 'CUSTOMER_REMINDER', status: 'FAILED',
+    recommendation: { source: 'SYSTEM', confidence: 0.6, rationale: 'Previous provider failure.' },
+    policyDecision: { decision: 'ALLOWED', reason: 'Previously allowed.' },
+    idempotencyKey: 'c6:CUSTOMER_REMINDER:retry2:contact0'
+  });
+
+  const result = await service.generateRecommendation({ merchantId: 'm1', recoveryCaseId: 'c6', newAttempt: true });
+
+  assert.equal(result.duplicate, false);
+  assert.equal(result.recommendation.action, 'CUSTOMER_REMINDER');
+  assert.equal(result.recommendation.confidence, 0.6);
+  assert.equal(result.policyDecision.decision, 'ALLOWED');
+  assert.equal(result.recoveryAction.status, 'POLICY_ALLOWED');
+  assert.match(result.recoveryAction.id, /^action_/);
+  assert.match(store.recoveryActions.at(-1).idempotencyKey, /:attempt1$/);
+  assert.equal(store.recoveryActions[0].status, 'FAILED');
+});
+
+test('a repeated new recovery attempt is idempotent and unsupported actions remain blocked', async () => {
+  const { store, service } = createService({ primaryProvider: null });
+  store.payments.push(buildPayment({ _id: 'p7', merchant: 'm1', amount: 75000 }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'c7', merchant: 'm1', payment: 'p7', retryCount: 2 }));
+  store.policies.push(buildPolicy({ merchant: 'm1', allowedActions: ['CUSTOMER_REMINDER'], minimumRecoveryConfidence: 0.6 }));
+  store.recoveryActions.push({ _id: 'old7', merchant: 'm1', payment: 'p7', recoveryCase: 'c7', type: 'CUSTOMER_REMINDER', status: 'FAILED', recommendation: { confidence: 0.6 }, policyDecision: { decision: 'ALLOWED', reason: 'Previous' }, idempotencyKey: 'old7' });
+
+  const first = await service.generateRecommendation({ merchantId: 'm1', recoveryCaseId: 'c7', newAttempt: true });
+  const second = await service.generateRecommendation({ merchantId: 'm1', recoveryCaseId: 'c7', newAttempt: true });
+
+  assert.equal(second.duplicate, true);
+  assert.equal(second.recoveryAction.id, first.recoveryAction.id);
+  assert.equal(store.recoveryActions.length, 2);
+  assert.equal(require('../src/services/policyEngine').evaluateRecoveryAction({ policy: store.policies[0], payment: store.payments[0], recoveryCase: store.recoveryCases[0], recommendation: { type: 'RETRY_PAYMENT', confidence: 0.95 } }).decision, 'BLOCKED');
+});

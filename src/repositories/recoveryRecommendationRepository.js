@@ -30,6 +30,10 @@ class RecoveryRecommendationRepository {
     return RecoveryAction.findOne({ idempotencyKey }).session(session);
   }
 
+  async findRecoveryActionsByCase(merchantId, recoveryCaseId, session) {
+    return RecoveryAction.find({ merchant: merchantId, recoveryCase: recoveryCaseId }).sort({ createdAt: -1 }).session(session);
+  }
+
   async createRecoveryAction(data, session) {
     const [action] = await RecoveryAction.create([data], { session });
     return action;

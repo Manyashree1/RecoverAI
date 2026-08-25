@@ -46,5 +46,7 @@ export const api = {
   cases: (params = {}) => apiFetch(`/api/recovery-cases?${new URLSearchParams(params)}`),
   case: (id) => apiFetch(`/api/recovery-cases/${id}`),
   audit: (params = {}) => apiFetch(`/api/audit-events?${new URLSearchParams(params)}`),
-  recommend: (id) => apiFetch(`/api/recovery-cases/${id}/recommendations`, { method: 'POST' })
+  recommend: (id) => apiFetch(`/api/recovery-cases/${id}/recommendations`, { method: 'POST' }),
+  newRecoveryAttempt: (id) => apiFetch(`/api/recovery-cases/${id}/recovery-attempts`, { method: 'POST' }),
+  execute: (id) => apiFetch(`/api/recovery-actions/${id}/execute`, { method: 'POST' })
 };

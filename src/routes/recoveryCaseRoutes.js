@@ -8,6 +8,7 @@ function createRecoveryCaseRouter({ controller = createRecoveryCaseController(),
   router.get('/', controller.list);
   router.get('/:id', controller.getById);
   router.post('/:id/recommendations', controller.createRecommendation);
+  router.post('/:id/recovery-attempts', controller.createRecoveryAttempt);
   return router;
 }
 

@@ -29,7 +29,24 @@ class WebhookIngestionService {
     } catch (error) {
       if (isDuplicateKeyError(error)) {
         const existingEvent = await this.repository.findWebhookEvent(providerEventId);
-        if (existingEvent) return { duplicate: true, eventType: parsed.eventType };
+        if (existingEvent) {
+          if (parsed.recoveryConfirmation) {
+            const merchant = await this.repository.findMerchantByAccountId(parsed.providerAccountId);
+            const context = merchant
+              ? await this.repository.findRecoveryActionByReference({ merchantId: merchant._id, referenceId: parsed.paymentLink.referenceId, paymentLinkId: parsed.paymentLink.id })
+              : null;
+            if (merchant && context?.action) {
+              await this.repository.reconcileConfirmedRecovery({
+                merchantId: merchant._id,
+                actionId: context.action._id,
+                providerPaymentId: parsed.payment.id,
+                amount: parsed.paymentLink.amountPaid,
+                currency: parsed.paymentLink.currency
+              });
+            }
+          }
+          return { duplicate: true, eventType: parsed.eventType };
+        }
       }
       throw error;
     }
@@ -40,6 +57,10 @@ class WebhookIngestionService {
     if (!merchant) {
       // A 503 causes Razorpay to retry after merchant account configuration is repaired.
       throw new AppError('Webhook account is not configured for a merchant.', 503);
+    }
+
+    if (parsed.recoveryConfirmation) {
+      return this.#ingestRecoveryConfirmation(providerEventId, parsed, merchant, session);
     }
 
     const existingPayment = await this.repository.findPaymentByRazorpayPaymentId(parsed.payment.id, session);
@@ -130,6 +151,50 @@ class WebhookIngestionService {
 
     await this.repository.markWebhookEventProcessed(webhookEvent._id, payment._id, session);
     return { duplicate: false, ignored: false, eventType: parsed.eventType, paymentId: String(payment._id), recoveryCaseId: recoveryCase ? String(recoveryCase._id) : undefined };
+  }
+
+  async #ingestRecoveryConfirmation(providerEventId, parsed, merchant, session) {
+    const context = await this.repository.findRecoveryActionByReference({
+      merchantId: merchant._id,
+      referenceId: parsed.paymentLink.referenceId,
+      paymentLinkId: parsed.paymentLink.id
+    }, session);
+    const webhookEvent = await this.repository.createWebhookEvent({
+      provider: 'RAZORPAY',
+      providerEventId,
+      providerEventType: parsed.eventType,
+      merchant: merchant._id,
+      payment: context?.payment?._id
+    }, session);
+    if (!context?.action || !context.recoveryCase || !context.payment) {
+      await this.repository.markWebhookEventProcessed(webhookEvent._id, undefined, session);
+      return { duplicate: false, ignored: true, eventType: parsed.eventType };
+    }
+
+    const confirmation = await this.repository.confirmRecovery({
+      merchantId: merchant._id,
+      actionId: context.action._id,
+      providerPaymentId: parsed.payment.id,
+      amount: parsed.paymentLink.amountPaid,
+      currency: parsed.paymentLink.currency
+    }, session);
+    if (confirmation.confirmed) {
+      await this.repository.createAuditEvent({
+        merchant: merchant._id,
+        payment: context.payment._id,
+        recoveryCase: confirmation.recoveryCase._id,
+        recoveryAction: confirmation.action._id,
+        providerEventId,
+        type: AUDIT_EVENT_TYPE.RECOVERY_COMPLETED,
+        actor: ACTOR_TYPE.RAZORPAY,
+        action: context.action.type,
+        reason: 'Razorpay confirmed payment for the RecoverAI Payment Link.',
+        result: 'PAYMENT_CONFIRMED',
+        metadata: { provider: 'RAZORPAY', providerPaymentId: parsed.payment.id, providerLinkId: parsed.paymentLink.id, amount: parsed.paymentLink.amountPaid, currency: parsed.paymentLink.currency }
+      }, session);
+    }
+    await this.repository.markWebhookEventProcessed(webhookEvent._id, context.payment._id, session);
+    return { duplicate: false, ignored: false, recovered: confirmation.confirmed, eventType: parsed.eventType, paymentId: String(context.payment._id), recoveryCaseId: String(context.recoveryCase._id) };
   }
 }
 

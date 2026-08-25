@@ -1,4 +1,5 @@
 const { AppError } = require('../utils/AppError');
+const { randomUUID } = require('node:crypto');
 const { RecoveryExecutionRepository } = require('../repositories/recoveryExecutionRepository');
 const { MongoTransactionRunner } = require('./mongoTransactionRunner');
 const { RazorpayTestClient } = require('./razorpay/razorpayTestClient');
@@ -8,7 +9,7 @@ const { canTransitionAction } = require('./recoveryExecutionStateMachine');
 const { RECOVERY_ACTION_TYPE, RECOVERY_ACTION_STATUS, PAYMENT_STATUS, RECOVERY_CASE_STATUS, ACTOR_TYPE, AUDIT_EVENT_TYPE } = require('../constants/enums');
 
 class RecoveryExecutionService {
-  constructor({ repository = new RecoveryExecutionRepository(), transactionRunner = new MongoTransactionRunner(), razorpayClient = new RazorpayTestClient(env) } = {}) {
+  constructor({ repository = new RecoveryExecutionRepository(), transactionRunner = new MongoTransactionRunner(), razorpayClient = new RazorpayTestClient({ keyId: env.razorpayKeyId, keySecret: env.razorpayKeySecret }) } = {}) {
     this.repository = repository;
     this.transactionRunner = transactionRunner;
     this.razorpayClient = razorpayClient;
@@ -58,7 +59,7 @@ class RecoveryExecutionService {
 
   async #complete(merchantId, actionId, reserved, providerResult, session) {
     const context = await this.repository.findActionContext(merchantId, actionId, session);
-    const action = await this.repository.markExecuted({ merchantId, actionId, executionKey: reserved.executionKey, providerReference: providerResult.providerReference }, session);
+    const action = await this.repository.markExecuted({ merchantId, actionId, executionKey: reserved.executionKey, providerReference: providerResult.providerReference, shortUrl: providerResult.shortUrl, status: providerResult.status }, session);
     if (!action) return { outcome: 'IN_PROGRESS' };
     const recoveryCase = await this.repository.updateCaseAfterPaymentLink(context.recoveryCase._id, session);
     await this.repository.createAuditEvent(audit({ merchantId, action, payment: context.payment, recoveryCase, type: AUDIT_EVENT_TYPE.ACTION_EXECUTION_COMPLETED, reason: 'Razorpay TEST payment link created. Payment remains unrecovered until provider evidence arrives.', result: 'PAYMENT_LINK_CREATED', metadata: { provider: 'RAZORPAY_TEST', providerReference: providerResult.providerReference, shortUrl: providerResult.shortUrl } }), session);
@@ -103,6 +104,6 @@ function publicAction(action) {
     }
   };
 }
-function audit({ merchantId, action, payment, recoveryCase, type, reason, result, error, metadata }) { return { merchant: merchantId, payment: payment._id, recoveryCase: recoveryCase._id, recoveryAction: action._id, type, actor: ACTOR_TYPE.SYSTEM, action: action.type, reason, result, error, metadata }; }
+function audit({ merchantId, action, payment, recoveryCase, type, reason, result, error, metadata }) { return { merchant: merchantId, payment: payment._id, recoveryCase: recoveryCase._id, recoveryAction: action._id, providerEventId: `recoverai:execution:${action._id}:${type}:${randomUUID()}`, type, actor: ACTOR_TYPE.SYSTEM, action: action.type, reason, result, error, metadata }; }
 
 module.exports = { RecoveryExecutionService };

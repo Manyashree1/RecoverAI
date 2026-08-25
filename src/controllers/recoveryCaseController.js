@@ -47,6 +47,19 @@ function createRecoveryCaseController({
       } catch (error) {
         return next(error);
       }
+    },
+
+    async createRecoveryAttempt(req, res, next) {
+      try {
+        const result = await recommendationService.generateRecommendation({
+          merchantId: req.auth.merchantId,
+          recoveryCaseId: req.params.id,
+          newAttempt: true
+        });
+        return res.status(result.duplicate ? 200 : 201).json(result);
+      } catch (error) {
+        return next(error);
+      }
     }
   };
 }

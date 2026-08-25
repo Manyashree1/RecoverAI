@@ -3,7 +3,7 @@ const { RecoveryRecommendationRepository } = require('../repositories/recoveryRe
 const { MongoTransactionRunner } = require('./mongoTransactionRunner');
 const { AiRecoveryAnalysisService, RECOMMENDATION_SOURCE } = require('./ai/aiRecoveryAnalysisService');
 const { evaluateRecoveryAction } = require('./policyEngine');
-const { RECOVERY_ACTION_STATUS, ACTOR_TYPE, AUDIT_EVENT_TYPE, POLICY_DECISION } = require('../constants/enums');
+const { RECOVERY_ACTION_STATUS, ACTOR_TYPE, AUDIT_EVENT_TYPE, POLICY_DECISION, OPEN_RECOVERY_CASE_STATUSES } = require('../constants/enums');
 
 /**
  * Orchestrates the pipeline described in docs/architecture.md:
@@ -30,9 +30,9 @@ class RecoveryRecommendationService {
     this.aiAnalysisService = aiAnalysisService;
   }
 
-  async generateRecommendation({ merchantId, recoveryCaseId }) {
+  async generateRecommendation({ merchantId, recoveryCaseId, newAttempt = false }) {
     try {
-      return await this.transactionRunner.run((session) => this.#generateInTransaction(merchantId, recoveryCaseId, session));
+      return await this.transactionRunner.run((session) => this.#generateInTransaction(merchantId, recoveryCaseId, session, newAttempt));
     } catch (error) {
       // Two concurrent requests can both pass the idempotency-key read
       // before either has written; the loser's transaction aborts with a
@@ -56,12 +56,30 @@ class RecoveryRecommendationService {
     }
   }
 
-  async #generateInTransaction(merchantId, recoveryCaseId, session) {
+  async #generateInTransaction(merchantId, recoveryCaseId, session, newAttempt) {
     const context = await this.repository.findRecoveryCaseWithPayment(merchantId, recoveryCaseId, session);
     if (!context || !context.payment) {
       throw new AppError('Recovery case not found.', 404);
     }
     const { recoveryCase, payment } = context;
+
+    // A terminal case (already recovered, unrecoverable, or explicitly
+    // closed) must not receive a fresh recommendation, and must never be
+    // re-analyzed into a NO_ACTION/ESCALATE_TO_HUMAN + POLICY_BLOCKED
+    // RecoveryAction that contradicts the historical outcome. The UI uses
+    // this as the authoritative "not actionable" signal.
+    if (!OPEN_RECOVERY_CASE_STATUSES.includes(recoveryCase.status)) {
+      const priorActions = await this.repository.findRecoveryActionsByCase(merchantId, recoveryCaseId, session);
+      return {
+        duplicate: true,
+        notActionable: true,
+        recoveryCaseId: String(recoveryCase._id),
+        paymentId: String(payment._id),
+        reason: `Recovery case is ${recoveryCase.status}; it is no longer open for recovery and no new recommendation can be generated.`,
+        recoveryAction: null,
+        history: priorActions.map(serializeAction)
+      };
+    }
 
     const policy = await this.repository.findOrCreatePolicy(merchantId, session);
 
@@ -75,11 +93,32 @@ class RecoveryRecommendationService {
       recommendation: { type: recommendation.action, confidence: recommendation.confidence }
     });
 
+    const priorActions = newAttempt
+      ? await this.repository.findRecoveryActionsByCase(merchantId, recoveryCaseId, session)
+      : [];
+    const priorMatchingAction = priorActions
+      .filter((action) => action.type === recommendation.action)
+      .sort((left, right) => attemptNumber(right) - attemptNumber(left))[0];
+    if (newAttempt && priorMatchingAction && priorMatchingAction.status !== RECOVERY_ACTION_STATUS.FAILED) {
+      return {
+        duplicate: true,
+        recoveryCaseId: String(recoveryCase._id),
+        paymentId: String(payment._id),
+        recommendation,
+        policyDecision: { decision: priorMatchingAction.policyDecision.decision, reason: priorMatchingAction.policyDecision.reason },
+        recoveryAction: serializeAction(priorMatchingAction)
+      };
+    }
+    if (newAttempt && !priorMatchingAction) {
+      throw new AppError('A new recovery attempt requires a failed prior action of the same type.', 409);
+    }
+    const attempt = newAttempt ? nextAttemptNumber(priorActions, recommendation.action) : null;
+    const idempotencyKey = buildIdempotencyKey({ recoveryCase, action: recommendation.action, attempt });
+
     // Re-analyzing an unchanged case (same retry/contact counters) produces
     // the same key, so it returns the earlier recommendation instead of
     // writing a duplicate RecoveryAction + audit trail -- including the
     // AI-stage audit events collected above, which are simply discarded.
-    const idempotencyKey = buildIdempotencyKey({ recoveryCase, action: recommendation.action });
     const existingAction = await this.repository.findRecoveryActionByIdempotencyKey(idempotencyKey, session);
     if (existingAction) {
       return {
@@ -116,7 +155,13 @@ class RecoveryRecommendationService {
     // events, so the timeline reads in the order things actually happened.
     for (const event of aiOutcome.auditEvents) {
       await this.repository.createAuditEvent(
-        { merchant: merchantId, payment: payment._id, recoveryCase: recoveryCase._id, ...event },
+        {
+          merchant: merchantId,
+          payment: payment._id,
+          recoveryCase: recoveryCase._id,
+          providerEventId: internalAuditEventId(idempotencyKey, event.type),
+          ...event
+        },
         session
       );
     }
@@ -127,6 +172,7 @@ class RecoveryRecommendationService {
         payment: payment._id,
         recoveryCase: recoveryCase._id,
         recoveryAction: recoveryAction._id,
+        providerEventId: internalAuditEventId(idempotencyKey, AUDIT_EVENT_TYPE.ACTION_RECOMMENDED),
         type: AUDIT_EVENT_TYPE.ACTION_RECOMMENDED,
         actor: ACTOR_TYPE.SYSTEM,
         reason: recommendation.reason,
@@ -152,6 +198,7 @@ class RecoveryRecommendationService {
         payment: payment._id,
         recoveryCase: recoveryCase._id,
         recoveryAction: recoveryAction._id,
+        providerEventId: internalAuditEventId(idempotencyKey, AUDIT_EVENT_TYPE.POLICY_EVALUATED),
         type: AUDIT_EVENT_TYPE.POLICY_EVALUATED,
         actor: ACTOR_TYPE.SYSTEM,
         reason: policyResult.reason,
@@ -173,8 +220,24 @@ class RecoveryRecommendationService {
   }
 }
 
-function buildIdempotencyKey({ recoveryCase, action }) {
-  return `${recoveryCase._id}:${action}:retry${recoveryCase.retryCount}:contact${recoveryCase.customerContactAttempts}`;
+function buildIdempotencyKey({ recoveryCase, action, attempt }) {
+  const base = `${recoveryCase._id}:${action}:retry${recoveryCase.retryCount}:contact${recoveryCase.customerContactAttempts}`;
+  return attempt === null ? base : `${base}:attempt${attempt}`;
+}
+
+function nextAttemptNumber(actions, actionType) {
+  const attemptNumbers = actions
+    .filter((action) => action.type === actionType)
+    .map(attemptNumber);
+  return Math.max(...attemptNumbers, 0) + 1;
+}
+
+function attemptNumber(action) {
+  return Number(action.idempotencyKey.match(/:attempt(\d+)$/)?.[1] || 0);
+}
+
+function internalAuditEventId(idempotencyKey, eventType) {
+  return `recoverai:${idempotencyKey}:${eventType}`;
 }
 
 function isDuplicateKeyError(error) {

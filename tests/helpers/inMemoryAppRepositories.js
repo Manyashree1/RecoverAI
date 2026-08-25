@@ -98,6 +98,12 @@ class InMemoryRecoveryRecommendationRepository {
     return this.store.recoveryActions.find((a) => a.idempotencyKey === idempotencyKey) || null;
   }
 
+  async findRecoveryActionsByCase(merchantId, recoveryCaseId) {
+    return this.store.recoveryActions.filter(
+      (action) => String(action.merchant) === String(merchantId) && String(action.recoveryCase) === String(recoveryCaseId)
+    );
+  }
+
   async createRecoveryAction(data) {
     if (await this.findRecoveryActionByIdempotencyKey(data.idempotencyKey)) throw duplicateKeyError();
     const action = { _id: this.nextId('action'), ...data };

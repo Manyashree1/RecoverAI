@@ -28,7 +28,7 @@ export async function apiFetch(path, options = {}) {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}${path}`, { ...options, headers });
   const body = await response.json().catch(() => ({}));
   if (response.status === 401) {
     clearSession();

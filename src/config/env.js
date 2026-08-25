@@ -10,6 +10,10 @@ const env = Object.freeze({
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
   razorpayAccountId: process.env.RAZORPAY_ACCOUNT_ID,
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+  // Comma-separated browser origins allowed to call this API from a deployed
+  // frontend, e.g. "https://recoverai.netlify.app". Empty by default, which
+  // keeps local same-origin/proxied behavior unchanged.
+  corsOrigins: String(process.env.CORS_ORIGIN || '').split(',').map((value) => value.trim()).filter(Boolean),
   // Signs merchant-admin session tokens. The insecure fallback only exists so
   // `npm run dev` boots without setup; production must set a long random value.
   jwtSecret: process.env.JWT_SECRET || 'dev_insecure_jwt_secret_change_me',

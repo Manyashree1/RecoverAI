@@ -19,7 +19,14 @@ class InMemoryWebhookRepository {
   }
 
   async findMerchantByAccountId(accountId) {
-    return this.state.merchants.find((merchant) => merchant.razorpayAccountId === accountId && merchant.status === 'ACTIVE');
+    const exactMatch = this.state.merchants.find((merchant) => merchant.razorpayAccountId === accountId && merchant.status === 'ACTIVE');
+    if (exactMatch) return exactMatch;
+    // Mirrors production: HMAC is verified by the controller, so resolve the
+    // single unbound demo merchant so recovery works before an account id is
+    // configured on the merchant.
+    const demo = this.state.merchants.filter((merchant) => merchant.name === 'RecoverAI Demo Merchant' && merchant.status === 'ACTIVE');
+    if (demo.length === 1 && !demo[0].razorpayAccountId) return demo[0];
+    return null;
   }
 
   async findWebhookEvent(providerEventId) {

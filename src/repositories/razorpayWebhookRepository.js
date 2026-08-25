@@ -8,18 +8,28 @@ const WebhookEvent = require('../models/WebhookEvent');
 const { WEBHOOK_EVENT_STATUS } = require('../constants/enums');
 const { RECOVERY_ACTION_TYPE, RECOVERY_ACTION_STATUS } = require('../constants/enums');
 const mongoose = require('mongoose');
-const { env } = require('../config/env');
 
 class RazorpayWebhookRepository {
   async findMerchantByAccountId(accountId, session) {
     const exactMatch = await Merchant.findOne({ razorpayAccountId: accountId, status: 'ACTIVE' }).session(session);
-    if (exactMatch || env.nodeEnv === 'production') return exactMatch;
+    if (exactMatch) return exactMatch;
 
-    // Local TEST Mode has one intentionally designated demo merchant and a
-    // shared webhook secret, so its provider account ID may be unavailable
-    // until the dashboard exposes it. Never use this fallback in production.
+    // HMAC-secured single-account TEST resolution, identical in local dev and
+    // production. The webhook controller verifies the Razorpay HMAC signature
+    // against the deployment's RAZORPAY_WEBHOOK_SECRET before ingestion, so a
+    // verified event is known to come from the configured Razorpay TEST
+    // account. Razorpay TEST webhooks do carry `account_id`, but that value is
+    // not exposed by any Razorpay API this deployment can call and cannot be
+    // assumed equal to the dashboard display Merchant ID. Until an operational
+    // razorpayAccountId is configured on the merchant, resolve the single
+    // designated demo merchant. This preserves merchant scoping: it applies
+    // only when exactly one RecoverAI Demo Merchant exists, that merchant has
+    // no razorpayAccountId bound, and every downstream correlation query stays
+    // merchant-scoped. Once razorpayAccountId is configured (e.g. via
+    // RAZORPAY_ACCOUNT_ID + seed), the exact match above is authoritative and
+    // this fallback stops applying.
     const demoMerchants = await Merchant.find({ name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }).session(session);
-    return demoMerchants.length === 1 && !demoMerchants[0].razorpayAccountId ? demoMerchants[0] : null;
+    return selectUnboundDemoMerchant(demoMerchants);
   }
 
   async findWebhookEvent(providerEventId) {
@@ -154,4 +164,15 @@ class RazorpayWebhookRepository {
   }
 }
 
-module.exports = { RazorpayWebhookRepository };
+/**
+ * Selects the sole RecoverAI Demo Merchant that has not yet been bound to a
+ * Razorpay account id. Returns null unless there is exactly one candidate and
+ * it has no razorpayAccountId -- never guesses between multiple merchants.
+ */
+function selectUnboundDemoMerchant(demoMerchants) {
+  if (!Array.isArray(demoMerchants) || demoMerchants.length !== 1) return null;
+  const [merchant] = demoMerchants;
+  return merchant && !merchant.razorpayAccountId ? merchant : null;
+}
+
+module.exports = { RazorpayWebhookRepository, selectUnboundDemoMerchant };

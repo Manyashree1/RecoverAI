@@ -226,3 +226,43 @@ test('unrelated duplicate key errors are not swallowed as webhook duplicates', a
     /Duplicate key/
   );
 });
+
+test('payment_link.paid for a single unbound demo merchant resolves and recovers the correlated case', async () => {
+  const { repository, service } = createService();
+  // One ACTIVE demo merchant with no bound account id; payload account_id does
+  // not match any configured merchant. HMAC was verified by the controller.
+  repository.state.merchants = [{ _id: 'merchant_demo', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }];
+  repository.state.payments.push({ _id: 'payment_recovery_001', merchant: 'merchant_demo', amount: 75000, currency: 'INR', status: 'FAILED', failure: { code: 'insufficient_funds' } });
+  repository.state.recoveryCases.push({ _id: 'case_recovery_001', merchant: 'merchant_demo', payment: 'payment_recovery_001', status: 'ACTION_PENDING', recoveredAmount: 0, retryCount: 0, customerContactAttempts: 1 });
+  repository.state.recoveryActions.push({ _id: 'action_001', merchant: 'merchant_demo', payment: 'payment_recovery_001', recoveryCase: 'case_recovery_001', type: 'CUSTOMER_REMINDER', status: 'EXECUTED', execution: { provider: 'RAZORPAY_TEST', providerReference: 'plink_001', result: 'PAYMENT_LINK_CREATED' } });
+
+  const result = await service.ingestRazorpayPaymentEvent({
+    providerEventId: 'evt_demo_unbound_paid_001',
+    payload: paymentLinkPaidEvent({ referenceId: 'ra_action_001', paymentLinkId: 'plink_001', paymentId: 'pay_new_demo_001', amountPaid: 75000, accountId: 'acc_test_unbound_not_configured' })
+  });
+
+  assert.equal(result.duplicate, false);
+  assert.equal(result.ignored, false);
+  assert.equal(result.recovered, true);
+  assert.equal(repository.state.recoveryCases[0].status, 'RECOVERED');
+  assert.equal(repository.state.recoveryCases[0].recoveredAmount, 75000);
+  assert.equal(repository.state.recoveryActions[0].execution.providerPaymentId, 'pay_new_demo_001');
+  assert.equal(repository.state.recoveryActions[0].execution.result, 'PAYMENT_CONFIRMED');
+  const completion = repository.state.auditEvents.find((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED);
+  assert.equal(completion?.actor, 'RAZORPAY');
+  assert.equal(completion?.metadata?.amount, 75000);
+});
+
+test('an unbound demo merchant is not resolved when more than one demo merchant exists', async () => {
+  const { repository, service } = createService();
+  repository.state.merchants = [
+    { _id: 'merchant_demo_a', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' },
+    { _id: 'merchant_demo_b', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }
+  ];
+
+  // Ambiguous -> no merchant resolved -> 503 so Razorpay retries after repair.
+  await assert.rejects(
+    service.ingestRazorpayPaymentEvent({ providerEventId: 'evt_ambiguous_001', payload: paymentLinkPaidEvent({ referenceId: 'ra_action_001', paymentLinkId: 'plink_001' }) }),
+    (error) => error.statusCode === 503
+  );
+});

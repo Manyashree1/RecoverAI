@@ -79,22 +79,22 @@ class RazorpayWebhookRepository {
       { new: true, session, runValidators: true }
     );
     if (!action) return { confirmed: false };
-    const payment = await Payment.findOneAndUpdate(
-      { _id: action.payment, merchant: merchantId, status: { $ne: 'CAPTURED' } },
-      { $set: { status: 'CAPTURED', amount, currency } },
-      { new: true, session, runValidators: true }
-    );
-    if (!payment) throw new Error('Payment could not be completed for the confirmed payment link.');
+    // The recovery provider payment is a SEPARATE Razorpay payment. It is
+    // represented by execution.providerPaymentId on the action above and,
+    // when Razorpay also emits a captured event for it, by its own Payment
+    // record via the generic ingestion path. The ORIGINAL failed payment that
+    // triggered this case must keep its historical FAILED status and failure
+    // signal; recovery confirmation never rewrites that record.
     const recoveryCase = await RecoveryCase.findOneAndUpdate(
       { _id: action.recoveryCase, merchant: merchantId, status: { $nin: ['RECOVERED', 'CLOSED'] }, recoveredAmount: 0 },
       { $set: { status: 'RECOVERED', recoveredAmount: amount, resolvedAt: new Date() } },
       { new: true, session, runValidators: true }
     );
     if (!recoveryCase) throw new Error('Recovery case could not be completed for the confirmed payment.');
-    return { confirmed: true, action, recoveryCase, payment, currency };
+    return { confirmed: true, action, recoveryCase, currency };
   }
 
-  async reconcileConfirmedRecovery({ merchantId, actionId, providerPaymentId, amount, currency }, session) {
+  async reconcileConfirmedRecovery({ merchantId, actionId, providerPaymentId }, session) {
     const action = await RecoveryAction.findOne({
       _id: actionId,
       merchant: merchantId,
@@ -105,12 +105,10 @@ class RazorpayWebhookRepository {
       'execution.providerPaymentId': providerPaymentId
     }).session(session);
     if (!action) return { reconciled: false };
-    const payment = await Payment.findOneAndUpdate(
-      { _id: action.payment, merchant: merchantId, status: { $ne: 'CAPTURED' } },
-      { $set: { status: 'CAPTURED', amount, currency } },
-      { new: true, session, runValidators: true }
-    );
-    return { reconciled: Boolean(payment), payment: payment || await Payment.findOne({ _id: action.payment, merchant: merchantId }).session(session) };
+    // Idempotent replay of an already-confirmed action: the provider payment
+    // evidence already lives on execution.providerPaymentId. The original
+    // failed payment is historical evidence and is never rewritten here.
+    return { reconciled: true };
   }
 
   async createPayment(data, session) {

@@ -91,29 +91,10 @@ class ReadRepository {
       .filter((event) => event.type === 'RECOVERY_COMPLETED')
       .map((event) => [String(event.recoveryAction), event]));
 
-    recoveryCase.recoveryActions = recoveryActions.map((action) => {
-      const completion = completedByAction.get(String(action._id));
-      const confirmation = recoveryCompletedByAction.get(String(action._id));
-      // In the in-memory test repository `recoveryActions` may carry the
-      // read shape already; keep it resilient to either representation.
-      const execution = action.execution || {};
-      const metadata = completion?.metadata || {};
-      const providerReference = execution.providerReference || metadata.providerReference;
-      const shortUrl = execution.shortUrl || metadata.shortUrl;
-      const providerStatus = execution.providerStatus || metadata.status;
-      const providerPaymentId = execution.providerPaymentId || confirmation?.metadata?.providerPaymentId;
-
-      return {
-        ...action,
-        paymentLink: providerReference || shortUrl ? {
-          id: providerReference,
-          url: shortUrl,
-          status: providerPaymentId ? 'PAID' : (providerStatus || 'created'),
-          provider: 'RAZORPAY_TEST',
-          providerPaymentId
-        } : undefined
-      };
-    });
+    recoveryCase.recoveryActions = recoveryActions.map((action) => buildPaymentLinkView(action, {
+      completion: completedByAction.get(String(action._id)),
+      confirmation: recoveryCompletedByAction.get(String(action._id))
+    }));
 
     // First-class "confirmed recovery" evidence (case -> provider-confirmed
     // executed action). This is the historical/terminal outcome the UI uses
@@ -145,6 +126,34 @@ class ReadRepository {
   }
 }
 
+/**
+ * Pure view builder for one recovery action's Payment Link card. The hosted
+ * link URL is ONLY the persisted execution.shortUrl (or its Razorpay-authored
+ * audit metadata fallback). It is never reconstructed from the payment-link
+ * ID: Razorpay short URLs are provider-issued and must be used verbatim.
+ */
+function buildPaymentLinkView(action, { completion, confirmation } = {}) {
+  // In the in-memory test repository `recoveryActions` may carry the read
+  // shape already; keep it resilient to either representation.
+  const execution = action.execution || {};
+  const metadata = completion?.metadata || {};
+  const providerReference = execution.providerReference || metadata.providerReference;
+  const shortUrl = execution.shortUrl || metadata.shortUrl;
+  const providerStatus = execution.providerStatus || metadata.status;
+  const providerPaymentId = execution.providerPaymentId || confirmation?.metadata?.providerPaymentId;
+
+  return {
+    ...action,
+    paymentLink: providerReference || shortUrl ? {
+      id: providerReference,
+      url: shortUrl,
+      status: providerPaymentId ? 'PAID' : (providerStatus || 'created'),
+      provider: 'RAZORPAY_TEST',
+      providerPaymentId
+    } : undefined
+  };
+}
+
 async function paginate(Model, query, { page = DEFAULT_PAGE, limit = DEFAULT_LIMIT, sort } = {}) {
   const safePage = Math.max(1, Number.isFinite(page) ? page : DEFAULT_PAGE);
   const safeLimit = Math.min(MAX_LIMIT, Math.max(1, Number.isFinite(limit) ? limit : DEFAULT_LIMIT));
@@ -164,4 +173,4 @@ async function paginate(Model, query, { page = DEFAULT_PAGE, limit = DEFAULT_LIM
   };
 }
 
-module.exports = { ReadRepository, DEFAULT_PAGE, DEFAULT_LIMIT, MAX_LIMIT };
+module.exports = { ReadRepository, buildPaymentLinkView, DEFAULT_PAGE, DEFAULT_LIMIT, MAX_LIMIT };

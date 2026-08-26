@@ -64,22 +64,19 @@ class InMemoryWebhookRepository {
   async confirmRecovery({ merchantId, actionId, providerPaymentId, amount, currency }) {
     const action = this.state.recoveryActions.find((candidate) => candidate._id === actionId && candidate.merchant === merchantId && candidate.status === 'EXECUTED' && candidate.execution?.result === 'PAYMENT_LINK_CREATED' && !candidate.execution?.providerPaymentId);
     if (!action) return { confirmed: false };
-    const payment = this.state.payments.find((candidate) => candidate._id === action.payment && candidate.merchant === merchantId);
-    if (!payment) throw new Error('Payment could not be completed for the confirmed payment link.');
-    Object.assign(payment, { status: 'CAPTURED', amount, currency });
+    // Mirrors RazorpayWebhookRepository.confirmRecovery: the original failed
+    // payment is never mutated; only the action and case carry recovery state.
     const recoveryCase = this.state.recoveryCases.find((candidate) => candidate._id === action.recoveryCase && candidate.merchant === merchantId && !['RECOVERED', 'CLOSED'].includes(candidate.status) && candidate.recoveredAmount === 0);
     if (!recoveryCase) throw new Error('Recovery case could not be completed for the confirmed payment.');
     Object.assign(action.execution, { providerPaymentId, result: 'PAYMENT_CONFIRMED', confirmedAt: new Date() });
     Object.assign(recoveryCase, { status: 'RECOVERED', recoveredAmount: amount, resolvedAt: new Date() });
-    return { confirmed: true, action, recoveryCase, payment };
+    return { confirmed: true, action, recoveryCase };
   }
 
-  async reconcileConfirmedRecovery({ merchantId, actionId, providerPaymentId, amount, currency }) {
+  async reconcileConfirmedRecovery({ merchantId, actionId, providerPaymentId }) {
     const action = this.state.recoveryActions.find((candidate) => candidate._id === actionId && candidate.merchant === merchantId && candidate.status === 'EXECUTED' && candidate.execution?.result === 'PAYMENT_CONFIRMED' && candidate.execution?.providerPaymentId === providerPaymentId);
     if (!action) return { reconciled: false };
-    const payment = this.state.payments.find((candidate) => candidate._id === action.payment && candidate.merchant === merchantId);
-    if (payment.status !== 'CAPTURED') Object.assign(payment, { status: 'CAPTURED', amount, currency });
-    return { reconciled: true, payment };
+    return { reconciled: true };
   }
 
   async resolveCustomer(merchantId, payment) {

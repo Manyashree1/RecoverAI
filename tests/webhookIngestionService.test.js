@@ -129,9 +129,18 @@ test('valid Payment Link confirmation recovers the correlated case with provider
 
   assert.equal(result.recovered, true);
   assert.equal(repository.state.recoveryActions[0].execution.result, 'PAYMENT_CONFIRMED');
+  // The recovery payment is represented SEPARATELY by the executed action's
+  // providerPaymentId — never by rewriting the original failed payment.
   assert.equal(repository.state.recoveryActions[0].execution.providerPaymentId, 'pay_recovery_001');
-  assert.equal(repository.state.payments[0].status, 'CAPTURED');
+  assert.equal(repository.state.payments.length, 1);
+  // REGRESSION: the original failed payment keeps its historical status,
+  // failure signal, and amount after a successful recovery.
+  assert.equal(repository.state.payments[0].status, PAYMENT_STATUS.FAILED);
+  assert.equal(repository.state.payments[0].failure?.code, 'insufficient_funds');
+  assert.equal(repository.state.payments[0].amount, 499900);
   assert.equal(repository.state.recoveryCases[0].status, 'RECOVERED');
+  // recoveredAmount comes from the VERIFIED recovery payment (510000), not
+  // from the original failed payment's amount (499900).
   assert.equal(repository.state.recoveryCases[0].recoveredAmount, 510000);
   assert.equal(repository.state.auditEvents[0].type, AUDIT_EVENT_TYPE.RECOVERY_COMPLETED);
   assert.equal(repository.state.auditEvents[0].actor, 'RAZORPAY');
@@ -153,7 +162,7 @@ test('duplicate Payment Link confirmation is idempotent and counted once', async
   assert.equal(metrics.recoveredRevenue, 510000);
 });
 
-test('duplicate Payment Link confirmation repairs a stale payment status after an earlier partial confirmation', async () => {
+test('duplicate Payment Link confirmation replay never rewrites the original failed payment', async () => {
   const { repository, service } = createService();
   seedExecutedRecovery(repository);
   repository.state.recoveryActions[0].execution.providerPaymentId = 'pay_recovery_001';
@@ -162,15 +171,21 @@ test('duplicate Payment Link confirmation repairs a stale payment status after a
   repository.state.recoveryCases[0].recoveredAmount = 510000;
   repository.state.auditEvents.push({ type: AUDIT_EVENT_TYPE.RECOVERY_COMPLETED, providerEventId: 'evt_recovery_paid_replay_001' });
 
+  repository.state.payments[0].status = 'FAILED';
   const input = { providerEventId: 'evt_recovery_paid_replay_001', payload: paymentLinkPaidEvent({ referenceId: 'ra_action_001', amountPaid: 510000 }) };
+  // First delivery records the webhook event (the action was already
+  // confirmed, so confirmation itself is a no-op).
   await service.ingestRazorpayPaymentEvent(input);
   repository.state.payments[0].status = 'FAILED';
-  repository.state.webhookEvents[0].providerEventId = 'evt_recovery_paid_replay_001';
 
+  // Replay of the same signed event takes the idempotent reconciliation path.
   const result = await service.ingestRazorpayPaymentEvent(input);
 
+  // The idempotent replay reconciles without touching historical evidence:
+  // the original failed payment must NOT be resurrected as CAPTURED merely
+  // because its recovery journey's separate provider payment succeeded.
   assert.equal(result.duplicate, true);
-  assert.equal(repository.state.payments[0].status, 'CAPTURED');
+  assert.equal(repository.state.payments[0].status, PAYMENT_STATUS.FAILED);
   assert.equal(repository.state.auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED).length, 1);
 });
 
@@ -246,6 +261,10 @@ test('payment_link.paid for a single unbound demo merchant resolves and recovers
   assert.equal(result.recovered, true);
   assert.equal(repository.state.recoveryCases[0].status, 'RECOVERED');
   assert.equal(repository.state.recoveryCases[0].recoveredAmount, 75000);
+  // REGRESSION: the original failed payment is untouched by the recovery.
+  assert.equal(repository.state.payments.length, 1);
+  assert.equal(repository.state.payments[0].status, 'FAILED');
+  assert.equal(repository.state.payments[0].failure?.code, 'insufficient_funds');
   assert.equal(repository.state.recoveryActions[0].execution.providerPaymentId, 'pay_new_demo_001');
   assert.equal(repository.state.recoveryActions[0].execution.result, 'PAYMENT_CONFIRMED');
   const completion = repository.state.auditEvents.find((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED);

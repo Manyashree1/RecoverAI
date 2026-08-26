@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/services/analyticsService.js && node --check src/repositories/analyticsRepository.js && node --check src/controllers/analyticsController.js && node --check src/routes/analyticsRoutes.js && node --check scripts/seedDemoData.js && node --check src/services/recoveryExecutionService.js && node --check src/services/razorpay/razorpayTestClient.js && node --check src/app.js",
-    "test": "node --test"
+    "check": "node --check src/server.js && node --check src/services/analyticsService.js && node --check src/repositories/analyticsRepository.js && node --check src/controllers/analyticsController.js && node --check src/routes/analyticsRoutes.js && node --check scripts/seedDemoData.js && node --check scripts/repairRecoveredOriginalPayments.js && node --check src/services/recoveryExecutionService.js && node --check src/services/razorpay/razorpayTestClient.js && node --check src/app.js",
+    "test": "node --test",
+    "repair:recovered-originals": "node scripts/repairRecoveredOriginalPayments.js"
   },
   "engines": {
     "node": ">=20"

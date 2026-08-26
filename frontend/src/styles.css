@@ -24,3 +24,35 @@
 .confirm-dialog{width:min(100%,480px);padding:25px;background:var(--panel-2);border:1px solid #41626a;border-radius:8px;box-shadow:0 24px 70px rgba(0,0,0,.48)}
 .confirm-dialog h2{margin:14px 0 9px;font-family:'Space Grotesk',sans-serif;font-size:25px}.confirm-dialog p{margin:0;color:var(--soft);font-size:13px;line-height:1.65}.confirm-facts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:20px 0}.confirm-facts span{display:grid;gap:5px;padding:11px;background:#101a22;border:1px solid var(--line);border-radius:6px}.confirm-facts small{color:var(--muted);font-size:10px}.confirm-facts b{font-size:12px}.dialog-actions{display:flex;justify-content:flex-end;gap:9px}.dialog-actions .primary-button,.dialog-actions .secondary-button{display:flex;align-items:center;gap:7px}.button-spinner{display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
 @media(max-width:500px){.confirm-facts{grid-template-columns:1fr}.dialog-actions{flex-direction:column-reverse}.dialog-actions button{width:100%;justify-content:center}}
+
+/* --- Case detail story polish (final demo) --- */
+.journey-panel{margin-bottom:18px}
+.journey-panel .state-rail.horizontal{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;padding:14px 2px 4px}
+.state-rail.horizontal .state-step{flex-direction:column;align-items:flex-start;gap:9px;min-height:0}
+.state-rail.horizontal .state-step:not(:last-child):after{display:none}
+.state-rail.horizontal .state-step span{width:24px;height:24px;font-size:10px}
+.state-rail.horizontal .state-step strong{font-size:11px;line-height:1.25}
+.state-rail.horizontal .state-step.done{color:#7d8f9c}
+.state-rail.horizontal .state-step.done strong{color:var(--soft)}
+.state-rail.horizontal .state-step.current span{border-color:var(--cyan);color:var(--cyan);box-shadow:0 0 0 3px rgba(73,213,208,.12)}
+.state-rail.horizontal .state-step.current strong{color:var(--cyan)}
+@media(max-width:900px){.journey-panel .state-rail.horizontal{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:540px){.journey-panel .state-rail.horizontal{grid-template-columns:repeat(2,1fr)}}
+
+.recovery-outcome.is-recovered{border-color:#2f5f52;background:#101d1a}
+.outcome-hero{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:13px 0 18px;padding:20px;background:#0c1e19;border:1px solid #2f5f52;border-radius:10px}
+.outcome-amount{display:inline-flex;align-items:baseline;gap:11px;font:700 clamp(30px,4vw,42px)/1 'Space Grotesk',sans-serif;color:var(--green);letter-spacing:-.02em}
+.outcome-amount em{font:700 11px 'DM Sans',sans-serif;font-style:normal;text-transform:uppercase;letter-spacing:.16em;color:#4fae83}
+.outcome-confirmed{display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border-radius:999px;background:#153427;border:1px solid #2f5f52;color:var(--green);font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.outcome-facts b{color:var(--text)}
+.confirmation-evidence p{color:#9fd8bd}
+
+.history-evidence.paid{color:var(--green);font-size:12px}
+.history-evidence.pending{color:var(--amber)}
+
+.audit-disclosure summary{display:flex;align-items:center;gap:9px;padding:12px 14px;margin-top:6px;border:1px solid var(--line);border-radius:7px;background:#101a22;color:var(--soft);font-size:12px;font-weight:600;cursor:pointer;list-style:none;user-select:none}
+.audit-disclosure summary::-webkit-details-marker{display:none}
+.audit-disclosure summary svg{color:var(--cyan);flex:none}
+.audit-disclosure summary:hover{border-color:#34525a}
+.audit-disclosure[open] summary{margin-bottom:12px;border-bottom-left-radius:0;border-bottom-right-radius:0}
+.audit-count{margin-left:auto;padding:3px 9px;border-radius:999px;background:#18232c;color:var(--muted);font-size:10px;font-weight:600}

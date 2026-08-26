@@ -145,6 +145,71 @@ test('merchant-scoped payments and recovery cases', async (t) => {
   });
 });
 
+test('recovery case list exposes provider payment evidence for journeys', async (t) => {
+  const { server, baseUrl, store, authService } = await startTestServer();
+  t.after(() => server.close());
+
+  await seedMerchantWithUser(store, authService, { merchantId: 'merchant_1', email: 'journey1@example.com', password: 'correct horse 1' });
+  await seedMerchantWithUser(store, authService, { merchantId: 'merchant_2', email: 'journey2@example.com', password: 'correct horse 2' });
+
+  // Merchant 1: an original failed payment whose journey was recovered through
+  // a Razorpay payment link. The provider payment also exists as its own
+  // Payment record (as ingested from provider webhooks), so clients can tell
+  // it apart from an independent payment only through the relationship:
+  // RecoveryAction.execution.providerPaymentId on the case's executed action.
+  store.payments.push(buildPayment({ _id: 'payment_original_m1', merchant: 'merchant_1' }));
+  store.payments.push(buildPayment({ _id: 'payment_provider_m1', merchant: 'merchant_1', razorpayPaymentId: 'pay_provider_m1', status: 'CAPTURED' }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'case_recovered_m1', merchant: 'merchant_1', payment: 'payment_original_m1', status: 'RECOVERED', recoveredAmount: 200000 }));
+  store.recoveryActions.push({
+    _id: 'action_confirmed_m1',
+    merchant: 'merchant_1',
+    payment: 'payment_original_m1',
+    recoveryCase: 'case_recovered_m1',
+    type: 'CUSTOMER_REMINDER',
+    status: 'EXECUTED',
+    execution: { provider: 'RAZORPAY_TEST', providerReference: 'plink_confirmed_m1', result: 'PAYMENT_CONFIRMED', providerPaymentId: 'pay_provider_m1' }
+  });
+
+  // A second merchant-1 case whose executed action has no provider payment yet
+  // (the link was created but no verified payment_link.paid arrived).
+  store.payments.push(buildPayment({ _id: 'payment_open_m1', merchant: 'merchant_1', customer: 'customer_2' }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'case_open_m1', merchant: 'merchant_1', payment: 'payment_open_m1' }));
+  store.recoveryActions.push({
+    _id: 'action_unconfirmed_m1',
+    merchant: 'merchant_1',
+    payment: 'payment_open_m1',
+    recoveryCase: 'case_open_m1',
+    type: 'CUSTOMER_REMINDER',
+    status: 'EXECUTED',
+    execution: { provider: 'RAZORPAY_TEST', providerReference: 'plink_unconfirmed_m1', result: 'PAYMENT_LINK_CREATED' }
+  });
+
+  // Another merchant's confirmed provider payment must never leak across scope.
+  store.recoveryActions.push({
+    _id: 'action_other_merchant',
+    merchant: 'merchant_2',
+    payment: 'payment_other_merchant',
+    recoveryCase: 'case_other_merchant',
+    type: 'CUSTOMER_REMINDER',
+    status: 'EXECUTED',
+    execution: { provider: 'RAZORPAY_TEST', providerReference: 'plink_other', result: 'PAYMENT_CONFIRMED', providerPaymentId: 'pay_provider_other' }
+  });
+
+  const response = await fetch(`${baseUrl}/api/recovery-cases`, {
+    headers: { authorization: `Bearer ${tokenFor(authService, { userId: 'user_merchant_1', merchantId: 'merchant_1' })}` }
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  const byId = new Map(body.data.map((item) => [item.id, item]));
+
+  // The recovered journey exposes exactly its own provider payment evidence.
+  assert.deepEqual(byId.get('case_recovered_m1').recoveryProviderPaymentIds, ['pay_provider_m1']);
+  // An unconfirmed journey claims no provider payment.
+  assert.deepEqual(byId.get('case_open_m1').recoveryProviderPaymentIds, []);
+  // No other merchant's provider payment appears anywhere in the response.
+  assert.ok(!body.data.some((item) => (item.recoveryProviderPaymentIds || []).includes('pay_provider_other')));
+});
+
 test('merchant-scoped analytics excludes another merchant data', async (t) => {
   const { server, baseUrl, store, authService } = await startTestServer();
   t.after(() => server.close());

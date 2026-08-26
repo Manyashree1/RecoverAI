@@ -38,7 +38,34 @@ class ReadRepository {
     const query = { merchant: merchantId };
     if (status === 'OPEN') query.status = { $in: OPEN_RECOVERY_CASE_STATUSES };
     else if (status) query.status = status;
-    return paginate(RecoveryCase, query, { page, limit, sort: { createdAt: -1 } });
+    const { items, pagination } = await paginate(RecoveryCase, query, { page, limit, sort: { createdAt: -1 } });
+
+    // Read-only relationship evidence for list consumers: the provider payment
+    // IDs (e.g. Razorpay pay_*) produced by each case's executed recovery
+    // actions. execution.providerPaymentId is written only after a verified
+    // payment_link.paid webhook confirmation, so its presence proves the
+    // provider payment belongs to this recovery journey. Clients use this to
+    // represent a journey once instead of duplicating its provider payment as
+    // a second standalone payment row. No documents are created or modified.
+    const caseIds = items.map((item) => item._id);
+    const actions = caseIds.length ? await RecoveryAction.find({
+      merchant: merchantId,
+      recoveryCase: { $in: caseIds },
+      'execution.providerPaymentId': { $exists: true, $nin: [null, ''] }
+    }).select('recoveryCase execution.providerPaymentId').lean() : [];
+
+    const providerPaymentIdsByCase = new Map();
+    for (const action of actions) {
+      const caseKey = String(action.recoveryCase);
+      const providerPaymentIds = providerPaymentIdsByCase.get(caseKey) || [];
+      if (!providerPaymentIds.includes(action.execution.providerPaymentId)) providerPaymentIds.push(action.execution.providerPaymentId);
+      providerPaymentIdsByCase.set(caseKey, providerPaymentIds);
+    }
+
+    return {
+      items: items.map((item) => ({ ...item, recoveryProviderPaymentIds: providerPaymentIdsByCase.get(String(item._id)) || [] })),
+      pagination
+    };
   }
 
   async findRecoveryCaseById(merchantId, recoveryCaseId) {

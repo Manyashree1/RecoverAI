@@ -45,7 +45,22 @@ class InMemoryReadRepository {
     let items = this.store.recoveryCases.filter((c) => String(c.merchant) === String(merchantId));
     if (status === 'OPEN') items = items.filter((c) => !['RECOVERED', 'UNRECOVERED', 'CLOSED'].includes(c.status));
     else if (status) items = items.filter((c) => c.status === status);
-    return paginate(items, page, limit);
+    const { items: paged, pagination } = paginate(items, page, limit);
+    // Mirrors ReadRepository.listRecoveryCases: derive each case's provider
+    // payment IDs from its executed actions' execution.providerPaymentId.
+    const providerPaymentIdsByCase = new Map();
+    for (const action of this.store.recoveryActions) {
+      const providerPaymentId = action.execution?.providerPaymentId;
+      if (!providerPaymentId || String(action.merchant) !== String(merchantId)) continue;
+      const caseKey = String(action.recoveryCase);
+      const ids = providerPaymentIdsByCase.get(caseKey) || [];
+      if (!ids.includes(providerPaymentId)) ids.push(providerPaymentId);
+      providerPaymentIdsByCase.set(caseKey, ids);
+    }
+    return {
+      items: paged.map((item) => ({ ...item, recoveryProviderPaymentIds: providerPaymentIdsByCase.get(String(item._id)) || [] })),
+      pagination
+    };
   }
 
   async findRecoveryCaseById(merchantId, recoveryCaseId) {

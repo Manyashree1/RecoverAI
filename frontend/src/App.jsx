@@ -41,9 +41,33 @@ function Overview() {
 function GaugeIcon(props) { return <Activity {...props} />; }
 
 function Payments() {
-  const [status, setStatus] = useState(''); const [query, setQuery] = useState(''); const { loading, error, data, reload } = useRequest(() => api.payments({ limit: 100, ...(status ? { status } : {}) }), [status]); const payments = data?.data || [];
-  const filtered = useMemo(() => payments.filter((payment) => `${payment.id} ${payment.razorpayPaymentId} ${payment.failure?.code}`.toLowerCase().includes(query.toLowerCase())), [payments, query]);
-  return <><PageHeader eyebrow="Operations / Payments" title="Payment operations" description="Find the failure, understand the pressure, and open its recovery story." action={<button className="secondary-button" onClick={reload}><RefreshCw size={15} /> Refresh</button>} /><div className="toolbar"><div className="search-field"><Search size={16} /><input placeholder="Search payment or provider ID" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="select-field"><Filter size={15} /><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option><option value="FAILED">Failed</option><option value="CAPTURED">Captured</option><option value="AUTHORIZED">Authorized</option></select></div></div>{loading ? <LoadingState text="Loading payment ledger" /> : error ? <ErrorState message={error} /> : filtered.length ? <div className="table-shell"><table><thead><tr><th>Payment</th><th>Amount</th><th>Status</th><th>Failure signal</th><th>Created</th><th /></tr></thead><tbody>{filtered.map((payment) => <tr key={payment.id} onClick={() => window.location.assign(`/payments/${payment.id}`)}><td><strong className="mono">{payment.razorpayPaymentId || payment.id}</strong><span className="table-sub">{payment.id}</span></td><td><strong>{currency(payment.amount, payment.currency)}</strong></td><td><StatusBadge value={payment.status} /></td><td>{payment.failure?.code ? <><span>{label(payment.failure.code)}</span><span className="table-sub">{failureCategory(payment.failure.code)}</span></> : <span className="muted">No failure recorded</span>}</td><td className="muted">{dateTime(payment.createdAt)}</td><td><ChevronIcon /></td></tr>)}</tbody></table></div> : <EmptyState icon={Receipt} title="No payments found" text={query ? 'Try a different search or clear the filter.' : 'Payments will appear here when Razorpay events are ingested.'} />}</>;
+  const [status, setStatus] = useState(''); const [query, setQuery] = useState('');
+  const paymentsRequest = useRequest(() => api.payments({ limit: 100, ...(status ? { status } : {}) }), [status]);
+  const casesRequest = useRequest(() => api.cases({ limit: 100 }), []);
+  const navigate = useNavigate();
+  const payments = paymentsRequest.data?.data || []; const cases = casesRequest.data?.data || [];
+  const reload = () => { paymentsRequest.reload(); casesRequest.reload(); };
+  // Relationship-driven grouping built only from existing API responses:
+  // - RecoveryCase.payment identifies the original payment of a journey.
+  // - RecoveryCase.recoveryProviderPaymentIds lists the provider payment IDs
+  //   recorded on that journey's executed actions (execution.providerPaymentId,
+  //   present only after a verified provider confirmation), so such a provider
+  //   payment is represented through its journey instead of appearing again as
+  //   a second independent payment row. No IDs or statuses are assumed here.
+  const { caseByOriginalPaymentId, caseByProviderPaymentId } = useMemo(() => {
+    const caseByOriginalPaymentId = new Map(cases.filter((item) => item.payment).map((item) => [String(item.payment), item]));
+    const caseByProviderPaymentId = new Map();
+    for (const item of cases) for (const providerPaymentId of item.recoveryProviderPaymentIds || []) caseByProviderPaymentId.set(providerPaymentId, item);
+    return { caseByOriginalPaymentId, caseByProviderPaymentId };
+  }, [cases]);
+  const journeys = useMemo(() => payments
+    .filter((payment) => !(payment.razorpayPaymentId && caseByProviderPaymentId.has(payment.razorpayPaymentId)))
+    .filter((payment) => `${payment.id} ${payment.razorpayPaymentId} ${payment.failure?.code}`.toLowerCase().includes(query.toLowerCase()))
+    .map((payment) => ({ payment, journeyCase: caseByOriginalPaymentId.get(String(payment.id)) })),
+  [payments, caseByOriginalPaymentId, caseByProviderPaymentId, query]);
+  const loading = paymentsRequest.loading || casesRequest.loading;
+  const error = paymentsRequest.error || casesRequest.error;
+  return <><PageHeader eyebrow="Operations / Payments" title="Payment operations" description="Find the failure, understand the pressure, and open its recovery story." action={<button className="secondary-button" onClick={reload}><RefreshCw size={15} /> Refresh</button>} /><div className="toolbar"><div className="search-field"><Search size={16} /><input placeholder="Search payment or provider ID" value={query} onChange={(event) => setQuery(event.target.value)} /></div><div className="select-field"><Filter size={15} /><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option><option value="FAILED">Failed</option><option value="CAPTURED">Captured</option><option value="AUTHORIZED">Authorized</option></select></div></div>{loading ? <LoadingState text="Loading payment ledger" /> : error ? <ErrorState message={error} /> : journeys.length ? <div className="table-shell"><table><thead><tr><th>Payment</th><th>Amount</th><th>Status</th><th>Failure signal</th><th>Created</th><th /></tr></thead><tbody>{journeys.map(({ payment, journeyCase }) => <tr key={payment.id} onClick={() => navigate(journeyCase ? `/recovery-cases/${journeyCase.id}` : `/payments/${payment.id}`)}><td><strong className="mono">{payment.razorpayPaymentId || payment.id}</strong><span className="table-sub">{payment.id}</span></td><td><strong>{currency(payment.amount, payment.currency)}</strong></td><td><StatusBadge value={payment.status} />{journeyCase && <span className="table-sub">Recovery: {label(journeyCase.status)}</span>}</td><td>{payment.failure?.code ? <><span>{label(payment.failure.code)}</span><span className="table-sub">{failureCategory(payment.failure.code)}</span></> : <span className="muted">No failure recorded</span>}</td><td className="muted">{dateTime(payment.createdAt)}</td><td><ChevronIcon /></td></tr>)}</tbody></table></div> : <EmptyState icon={Receipt} title="No payments found" text={query ? 'Try a different search or clear the filter.' : 'Payments will appear here when Razorpay events are ingested.'} />}</>;
 }
 function ChevronIcon() { return <ArrowUpRight size={17} className="row-arrow" />; }
 
@@ -74,8 +98,15 @@ function StateRail({ active }) { const states = ['DETECTED', 'DIAGNOSED', 'RECOM
 function Timeline({ events }) { return <div className="timeline">{[...events].reverse().map((event) => <div className="timeline-item" key={event.id || `${event.type}-${event.createdAt}`}><span className="timeline-dot" /><div><div className="timeline-meta"><strong>{label(event.type)}</strong><time>{dateTime(event.createdAt)}</time></div><p>{event.reason || event.result || 'Event recorded.'}</p>{event.action && <span className="timeline-tag">{label(event.action)}</span>}</div></div>)}</div>; }
 
 function PaymentDetail() {
-  const { id } = useParams(); const paymentRequest = useRequest(() => api.payment(id), [id]); const casesRequest = useRequest(() => api.cases({ limit: 100 }), []); const payment = paymentRequest.data?.data; const linkedCase = (casesRequest.data?.data || []).find((item) => String(item.payment) === String(id));
+  const { id } = useParams(); const paymentRequest = useRequest(() => api.payment(id), [id]); const casesRequest = useRequest(() => api.cases({ limit: 100 }), []); const payment = paymentRequest.data?.data; const cases = casesRequest.data?.data || [];
+  const linkedCase = cases.find((item) => String(item.payment) === String(id));
+  // When this record is itself the provider payment captured by a recovery
+  // journey (its razorpayPaymentId matches a case action's
+  // execution.providerPaymentId), route to the owning recovery case rather
+  // than presenting a standalone payment page without its recovery context.
+  const owningJourney = payment?.razorpayPaymentId ? cases.find((item) => (item.recoveryProviderPaymentIds || []).includes(payment.razorpayPaymentId)) : null;
   if (paymentRequest.loading) return <LoadingState text="Loading payment detail" />; if (paymentRequest.error) return <ErrorState message={paymentRequest.error} />; if (!payment) return null;
+  if (owningJourney) return <Navigate to={`/recovery-cases/${owningJourney.id}`} replace />;
   return <><Link className="back-link" to="/payments"><ArrowLeft size={15} /> Back to payments</Link><PageHeader eyebrow="Payment detail" title={payment.razorpayPaymentId || payment.id} description="The payment record that started this recovery journey." action={<StatusBadge value={payment.status} />} /><div className="single-detail"><section className="detail-panel"><div className="payment-amount">{currency(payment.amount, payment.currency)}</div><div className="detail-pairs"><span><small>Payment ID</small><b className="mono">{payment.id}</b></span><span><small>Provider payment ID</small><b className="mono">{payment.razorpayPaymentId || 'Not recorded'}</b></span><span><small>Failure category</small><b>{failureCategory(payment.failure?.code)}</b></span><span><small>Recorded</small><b>{dateTime(payment.createdAt)}</b></span></div><div className="failure-callout"><AlertIcon /><div><strong>{label(payment.failure?.code || 'No failure')}</strong><span>{payment.failure?.description || 'No failure details were recorded for this payment.'}</span></div></div>{linkedCase ? <Link className="primary-button inline-button" to={`/recovery-cases/${linkedCase.id}`}>Open recovery case <ArrowUpRight size={15} /></Link> : <EvidenceNote>No recovery case is linked to this payment.</EvidenceNote>}</section></div></>;
 }
 function AlertIcon() { return <Activity size={18} />; }

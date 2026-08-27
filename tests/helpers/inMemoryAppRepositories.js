@@ -1,4 +1,5 @@
 const { RECOVERY_POLICY_DEFAULTS } = require('./fixtures');
+const { buildPaymentLinkView, buildOriginalPaymentView, buildEvidenceSummary } = require('../../src/repositories/readRepository');
 
 /**
  * In-memory stand-ins for ReadRepository / RecoveryRecommendationRepository,
@@ -69,13 +70,128 @@ class InMemoryReadRepository {
     );
     if (!recoveryCase) return null;
     const payment = this.store.payments.find((p) => String(p._id) === String(recoveryCase.payment));
-    return { ...recoveryCase, payment };
+    const recoveryActions = this.store.recoveryActions
+      .filter((a) => String(a.merchant) === String(merchantId) && String(a.recoveryCase) === String(recoveryCaseId))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+    // Mirror the production ReadRepository: derive the original-trigger view
+    // from persisted evidence (a PAYMENT_FAILED audit event for this payment,
+    // or a non-empty payment.failure.code) so the in-memory tests exercise
+    // the same read-model contract the API exposes.
+    const failureEvents = payment
+      ? this.store.auditEvents
+          .filter((e) => String(e.merchant) === String(merchantId) && String(e.payment) === String(payment._id) && e.type === 'PAYMENT_FAILED')
+          .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
+      : [];
+    const originalPayment = payment
+      ? { ...buildOriginalPaymentView(payment, recoveryCase.createdAt, failureEvents), payment: undefined }
+      : null;
+    if (originalPayment) delete originalPayment.payment;
+
+    const completedByAction = new Map();
+    const recoveryCompletedByAction = new Map();
+    for (const action of recoveryActions) {
+      const completion = this.store.auditEvents.find((e) =>
+        String(e.merchant) === String(merchantId) &&
+        String(e.recoveryAction) === String(action._id) &&
+        e.type === 'ACTION_EXECUTION_COMPLETED'
+      );
+      const confirmation = this.store.auditEvents.find((e) =>
+        String(e.merchant) === String(merchantId) &&
+        String(e.recoveryAction) === String(action._id) &&
+        e.type === 'RECOVERY_COMPLETED'
+      );
+      if (completion) completedByAction.set(String(action._id), completion);
+      if (confirmation) recoveryCompletedByAction.set(String(action._id), confirmation);
+    }
+
+    const builtActions = recoveryActions.map((action) => buildPaymentLinkView(action, {
+      completion: completedByAction.get(String(action._id)),
+      confirmation: recoveryCompletedByAction.get(String(action._id))
+    }));
+
+    const confirmedAction = builtActions.find((action) =>
+      action.type === 'CUSTOMER_REMINDER' &&
+      action.status === 'EXECUTED' &&
+      action.execution?.result === 'PAYMENT_CONFIRMED'
+    );
+    const confirmedRecovery = confirmedAction
+      ? {
+          actionId: String(confirmedAction._id),
+          recoveredAt: recoveryCase.resolvedAt,
+          providerPaymentId: confirmedAction.paymentLink?.providerPaymentId || confirmedAction.execution?.providerPaymentId,
+          providerLinkId: confirmedAction.paymentLink?.id || confirmedAction.execution?.providerReference,
+          amount: recoveryCase.recoveredAmount
+        }
+      : undefined;
+
+    const summaryEvents = this.store.auditEvents
+      .filter((e) => String(e.merchant) === String(merchantId) && String(e.recoveryCase) === String(recoveryCaseId))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+    return {
+      ...recoveryCase,
+      payment,
+      originalPayment,
+      recoveryActions: builtActions,
+      ...(confirmedRecovery ? { confirmedRecovery } : {}),
+      evidenceSummary: buildEvidenceSummary(summaryEvents)
+    };
   }
 
   async listAuditEvents(merchantId, { payment, recoveryCase, page = 1, limit = 20 } = {}) {
     let items = this.store.auditEvents.filter((e) => String(e.merchant) === String(merchantId));
     if (payment) items = items.filter((e) => String(e.payment) === String(payment));
     if (recoveryCase) items = items.filter((e) => String(e.recoveryCase) === String(recoveryCase));
+    return paginate(items, page, limit);
+  }
+
+  async listRecoveryActions(merchantId, { page = 1, limit = 20 } = {}) {
+    const actions = this.store.recoveryActions
+      .filter((a) => String(a.merchant) === String(merchantId))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    const caseById = new Map(this.store.recoveryCases.map((c) => [String(c._id), c]));
+    const paymentById = new Map(this.store.payments.map((p) => [String(p._id), p]));
+
+    const items = actions.map((action) => {
+      const recoveryCase = caseById.get(String(action.recoveryCase));
+      const payment = paymentById.get(String(action.payment));
+      const completion = this.store.auditEvents.find((e) =>
+        String(e.merchant) === String(merchantId) &&
+        String(e.recoveryAction) === String(action._id) &&
+        e.type === 'ACTION_EXECUTION_COMPLETED'
+      );
+      const confirmation = this.store.auditEvents.find((e) =>
+        String(e.merchant) === String(merchantId) &&
+        String(e.recoveryAction) === String(action._id) &&
+        e.type === 'RECOVERY_COMPLETED'
+      );
+      const linkView = buildPaymentLinkView(action, { completion, confirmation });
+      return {
+        id: String(action._id),
+        type: action.type,
+        status: action.status,
+        recommendation: action.recommendation,
+        policyDecision: action.policyDecision,
+        execution: action.execution,
+        paymentLink: linkView.paymentLink,
+        createdAt: action.createdAt,
+        updatedAt: action.updatedAt,
+        recoveryCase: recoveryCase ? {
+          id: String(recoveryCase._id),
+          status: recoveryCase.status,
+          recoveredAmount: recoveryCase.recoveredAmount,
+          resolvedAt: recoveryCase.resolvedAt,
+          payment: recoveryCase.payment ? { id: String(recoveryCase.payment) } : null
+        } : null,
+        payment: payment ? {
+          id: String(payment._id),
+          razorpayPaymentId: payment.razorpayPaymentId,
+          amount: payment.amount,
+          currency: payment.currency
+        } : null
+      };
+    });
     return paginate(items, page, limit);
   }
 }

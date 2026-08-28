@@ -12,6 +12,7 @@ import {
 } from 'react-router-dom';
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   ArrowUpRight,
   BarChart3,
@@ -22,6 +23,7 @@ import {
   ClipboardList,
   FileSearch,
   Filter,
+  Lock,
   LogOut,
   Menu,
   Receipt,
@@ -443,40 +445,9 @@ function Overview() {
       <div className="metrics-grid">
         <MetricCard
           icon={CircleDollarSign}
-          label="Revenue at risk"
-          value={currency(overview.revenueAtRisk)}
-          detail="Failed payments with open cases"
-          tone="amber"
-        />
-
-        <MetricCard
-          icon={ClipboardList}
-          label="Eligible cases"
-          value={number(overview.eligibleRecoveryCases)}
-          detail="Currently open for recovery"
-        />
-
-        <MetricCard
-          icon={Zap}
-          label="Recovery attempts"
-          value={number(overview.recoveryAttempts)}
-          detail="Entered execution"
-          tone="cyan"
-        />
-
-        <MetricCard
-          icon={ShieldCheck}
-          label="Successful recoveries"
-          value={number(overview.successfulRecoveries)}
-          detail="With provider evidence"
-          tone="green"
-        />
-
-        <MetricCard
-          icon={CircleDollarSign}
           label="Recovered revenue"
           value={currency(overview.recoveredRevenue)}
-          detail="Confirmed, never assumed"
+          detail="Confirmed by provider evidence"
           tone="green"
         />
 
@@ -484,17 +455,89 @@ function Overview() {
           icon={BarChart3}
           label="Recovery rate"
           value={percent(overview.recoveryRate)}
-          detail="Successful / eligible"
+          detail="Cases recovered / at risk"
+          tone="green"
         />
 
         <MetricCard
-          icon={GaugeIcon}
-          label="Value rate"
-          value={percent(overview.recoveryValueRate)}
-          detail="Recovered / at risk"
-          tone="violet"
+          icon={ShieldCheck}
+          label="Successful recoveries"
+          value={number(overview.successfulRecoveries)}
+          detail="With confirmed payment"
+          tone="green"
+        />
+
+        <MetricCard
+          icon={AlertIcon}
+          label="Escalated to humans"
+          value={number(overview.escalatedCases)}
+          detail={overview.escalatedAmount ? currency(overview.escalatedAmount) : 'No escalations'}
+          tone="amber"
+        />
+
+        <MetricCard
+          icon={LockIcon}
+          label="Stopped by policy"
+          value={number(overview.stoppedActions || overview.blockedActions)}
+          detail={overview.blockedAmount ? currency(overview.blockedAmount) : 'Safety rules applied'}
+          tone="cyan"
+        />
+
+        <MetricCard
+          icon={Activity}
+          label="Recovery attempts"
+          value={number(overview.recoveryAttempts)}
+          detail="Actions executed"
         />
       </div>
+
+      {overview.funnel && (
+        <section className="section-block">
+          <SectionHeading
+            eyebrow="Recovery funnel"
+            title="From detection to recovery"
+          />
+          <div className="funnel-container">
+            <FunnelBar
+              stage="Detected"
+              count={overview.funnel.detected?.count || 0}
+              amount={overview.funnel.detected?.amount || 0}
+              total={overview.funnel.detected?.count || 1}
+            />
+            <FunnelBar
+              stage="Diagnosed"
+              count={overview.funnel.diagnosed?.count || 0}
+              amount={overview.funnel.diagnosed?.amount || 0}
+              total={overview.funnel.detected?.count || 1}
+            />
+            <FunnelBar
+              stage="Recommended"
+              count={overview.funnel.recommended?.count || 0}
+              amount={overview.funnel.recommended?.amount || 0}
+              total={overview.funnel.detected?.count || 1}
+            />
+            <FunnelBar
+              stage="Policy Allowed"
+              count={overview.funnel.policyAllowed?.count || 0}
+              amount={overview.funnel.policyAllowed?.amount || 0}
+              total={overview.funnel.detected?.count || 1}
+            />
+            <FunnelBar
+              stage="Executed"
+              count={overview.funnel.executed?.count || 0}
+              amount={overview.funnel.executed?.amount || 0}
+              total={overview.funnel.detected?.count || 1}
+            />
+            <FunnelBar
+              stage="Recovered"
+              count={overview.funnel.recovered?.count || 0}
+              amount={overview.funnel.recovered?.amount || 0}
+              total={overview.funnel.detected?.count || 1}
+              tone="green"
+            />
+          </div>
+        </section>
+      )}
 
       <section className="section-block">
         <SectionHeading
@@ -542,6 +585,25 @@ function Overview() {
 
 function GaugeIcon(props) {
   return <Activity {...props} />;
+}
+
+function FunnelBar({ stage, count, amount, total, tone = 'blue' }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <div className={`funnel-bar ${tone}`}>
+      <div className="funnel-bar-top">
+        <span className="funnel-stage">{stage}</span>
+        <span className="funnel-count">{number(count)}</span>
+      </div>
+      <div className="funnel-track">
+        <span className="funnel-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="funnel-bottom">
+        <span className="funnel-amount">{currency(amount)}</span>
+        <span className="funnel-pct">{pct}%</span>
+      </div>
+    </div>
+  );
 }
 
 function Payments() {
@@ -1234,6 +1296,44 @@ function CaseDetail() {
               </div>
             )}
           </section>
+
+          {(() => {
+            const escalationAction = (item.recoveryActions || []).find((a) => a.type === 'ESCALATE_TO_HUMAN');
+            if (!escalationAction) return null;
+            return (
+              <section className="detail-panel escalation-panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">Escalation</span>
+                    <h2>Automation stopped safely</h2>
+                  </div>
+                  <AlertIcon />
+                </div>
+                <div className="escalation-summary">
+                  <p>
+                    <strong>Automation stopped.</strong> {escalationAction.policyDecision?.reason || 'Maximum automated attempts reached.'}
+                  </p>
+                  <div className="escalation-meta">
+                    <span>
+                      Reason <b>{escalationAction.policyDecision?.reason || 'Exhausted automated channels'}</b>
+                    </span>
+                    <span>
+                      Escalated at <b>{dateTime(escalationAction.createdAt)}</b>
+                    </span>
+                    <span>
+                      Status <StatusBadge value="ESCALATED" />
+                    </span>
+                  </div>
+                  {escalationAction.recommendation?.rationale && (
+                    <div className="escalation-context">
+                      <span className="field-label">Context for human reviewer</span>
+                      <p>{escalationAction.recommendation.rationale}</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            );
+          })()}
 
           {primaryAction && (
             <section className="detail-panel">
@@ -2275,7 +2375,7 @@ function PaymentDetail() {
 }
 
 function AlertIcon() {
-  return <Activity size={18} />;
+  return <AlertTriangle size={18} />;
 }
 
 /* =========================================================
@@ -2324,11 +2424,11 @@ function Actions() {
         <div className="table-shell">
           <table>
             <thead>
-              <tr>
+               <tr>
                 <th>Action</th>
                 <th>Recovery case</th>
                 <th>Status</th>
-                <th>Policy decision</th>
+                <th>Policy / stopping</th>
                 <th>Execution / outcome</th>
                 <th>Timestamp</th>
               </tr>
@@ -2376,6 +2476,14 @@ function Actions() {
                       <span className="muted">
                         Not evaluated
                       </span>
+                    )}
+                    {itemAction.policyDecision
+                      ?.reason && (
+                      <div className="cell-reason">
+                        {itemAction.policyDecision.reason.length > 60
+                          ? `${itemAction.policyDecision.reason.slice(0, 60)}...`
+                          : itemAction.policyDecision.reason}
+                      </div>
                     )}
                   </td>
 

@@ -115,7 +115,7 @@ test('Recovery Actions page renders a table with real ledger columns', () => {
   assert.ok(actionsSource.includes('<th>Action</th>'), 'Table must have an Action column.');
   assert.ok(actionsSource.includes('<th>Recovery case</th>'), 'Table must have a Recovery case column.');
   assert.ok(actionsSource.includes('<th>Status</th>'), 'Table must have a Status column.');
-  assert.ok(actionsSource.includes('<th>Policy decision</th>'), 'Table must have a Policy decision column.');
+  assert.ok(actionsSource.includes('<th>Policy / stopping</th>'), 'Table must have a Policy/stopping column.');
   assert.ok(actionsSource.includes('<th>Execution / outcome</th>'), 'Table must have an Execution column.');
   assert.ok(actionsSource.includes('<th>Timestamp</th>'), 'Table must have a Timestamp column.');
 });

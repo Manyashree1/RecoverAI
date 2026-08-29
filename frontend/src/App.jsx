@@ -447,7 +447,7 @@ function Overview() {
           icon={CircleDollarSign}
           label="Recovered revenue"
           value={currency(overview.recoveredRevenue)}
-          detail="Confirmed by provider evidence"
+          detail="Provider-confirmed via webhook"
           tone="green"
         />
 
@@ -455,7 +455,7 @@ function Overview() {
           icon={BarChart3}
           label="Recovery rate"
           value={percent(overview.recoveryRate)}
-          detail="Cases recovered / at risk"
+          detail="Recovered cases / eligible at-risk cases"
           tone="green"
         />
 
@@ -463,7 +463,7 @@ function Overview() {
           icon={ShieldCheck}
           label="Successful recoveries"
           value={number(overview.successfulRecoveries)}
-          detail="With confirmed payment"
+          detail="With confirmed provider payment"
           tone="green"
         />
 
@@ -471,7 +471,7 @@ function Overview() {
           icon={AlertIcon}
           label="Escalated to humans"
           value={number(overview.escalatedCases)}
-          detail={overview.escalatedAmount ? currency(overview.escalatedAmount) : 'No escalations'}
+          detail={overview.escalatedAmount ? `${currency(overview.escalatedAmount)} at risk` : 'Automation stopped for review'}
           tone="amber"
         />
 
@@ -479,7 +479,7 @@ function Overview() {
           icon={LockIcon}
           label="Stopped by policy"
           value={number(overview.stoppedActions || overview.blockedActions)}
-          detail={overview.blockedAmount ? currency(overview.blockedAmount) : 'Safety rules applied'}
+          detail={overview.blockedAmount ? `${currency(overview.blockedAmount)} policy-bound` : 'Safety/policy rules applied'}
           tone="cyan"
         />
 
@@ -487,7 +487,7 @@ function Overview() {
           icon={Activity}
           label="Recovery attempts"
           value={number(overview.recoveryAttempts)}
-          detail="Actions executed"
+          detail="Actions executed or in progress"
         />
       </div>
 
@@ -496,6 +496,11 @@ function Overview() {
           <SectionHeading
             eyebrow="Recovery funnel"
             title="From detection to recovery"
+            action={
+              <span className="muted" style={{ fontSize: '12px' }}>
+                {overview.eligibleRecoveryCases} eligible at-risk cases
+              </span>
+            }
           />
           <div className="funnel-container">
             <FunnelBar
@@ -535,6 +540,14 @@ function Overview() {
               total={overview.funnel.detected?.count || 1}
               tone="green"
             />
+          </div>
+          <div className="funnel-legend">
+            <span><strong>Detected</strong> — recovery cases created</span>
+            <span><strong>Diagnosed</strong> — failure categorized</span>
+            <span><strong>Recommended</strong> — action proposed</span>
+            <span><strong>Policy allowed</strong> — merchant policy passed</span>
+            <span><strong>Executed</strong> — action performed</span>
+            <span><strong>Recovered</strong> — provider-confirmed</span>
           </div>
         </section>
       )}
@@ -576,8 +589,9 @@ function Overview() {
 
       <EvidenceNote>
         Numbers above are calculated from your persisted payments, cases,
-        actions, and audit events. Link creation is not counted as recovered
-        revenue.
+        actions, and audit events. A payment link being created is{' '}
+        <strong>not</strong> counted as recovered revenue &mdash; only
+        provider-confirmed evidence counts.
       </EvidenceNote>
     </>
   );
@@ -585,6 +599,15 @@ function Overview() {
 
 function GaugeIcon(props) {
   return <Activity {...props} />;
+}
+
+function recommendationSourceLabel(recommendation) {
+  const source =
+    recommendation?.source ||
+    recommendation?.recoveryAction?.recommendation?.source;
+  if (source === 'AI_AGENT') return 'AI recommendation';
+  if (source === 'SYSTEM') return 'Deterministic fallback recommendation';
+  return 'System fallback';
 }
 
 function FunnelBar({ stage, count, amount, total, tone = 'blue' }) {
@@ -814,8 +837,14 @@ function Payments() {
   );
 }
 
-function ChevronIcon() {
-  return <ArrowUpRight size={17} className="row-arrow" />;
+function isStoppingRuleReason(reason) {
+  if (!reason) return false;
+  return /retry count|contacted|exhausted|cooldown|fatigue|automation channels|terminal state|payment.*captured/i.test(reason);
+}
+
+function decisionSource(itemAction) {
+  if (!itemAction.policyDecision?.reason) return 'policy';
+  return isStoppingRuleReason(itemAction.policyDecision.reason) ? 'stopping' : 'policy';
 }
 
 function RecoveryCases() {
@@ -1155,9 +1184,7 @@ function CaseDetail() {
 
             {isTerminal && (
               <EvidenceNote>
-                The original payment failed. The recovery outcome
-                below is a separate customer payment, confirmed
-                independently by Razorpay.
+                The original payment failed. The recovery outcome below is a separate customer payment, confirmed independently by Razorpay.
               </EvidenceNote>
             )}
           </section>
@@ -1168,7 +1195,7 @@ function CaseDetail() {
             </div>
 
             <div className="state-rail horizontal">
-              <StateRail active={item.status} />
+              <StateRail caseData={item} />
             </div>
           </section>
 
@@ -1243,9 +1270,10 @@ function CaseDetail() {
                     </span>
 
                     <p>
-                      Razorpay TEST webhook verified this
-                      recovery via a signed payment link event
-                      (RECOVERY_COMPLETED).
+                      Razorpay verified this recovery via a signed
+                      payment link event (RECOVERY_COMPLETED). This is
+                      a <strong>separate customer payment</strong>, not
+                      a retry of the original failed payment above.
                       {confirmedRecovery.providerPaymentId
                         ? ` Provider payment ID: ${confirmedRecovery.providerPaymentId}.`
                         : ''}
@@ -1300,30 +1328,46 @@ function CaseDetail() {
           {(() => {
             const escalationAction = (item.recoveryActions || []).find((a) => a.type === 'ESCALATE_TO_HUMAN');
             if (!escalationAction) return null;
+            const escalationReason = escalationAction.policyDecision?.reason || 'Maximum automated attempts reached.';
+            const isStoppingRule = /retry count|contacted|exhausted|cooldown|fatigue|automation channels/i.test(escalationReason);
+            const isPolicyBlock = !isStoppingRule;
+            const stoppingRuleMatch = escalationReason.match(/(MAX_RETRIES_EXHAUSTED|CONTACT_FATIGUE|AUTOMATION_EXHAUSTED|COOLDOWN|TERMINAL_STATE|PAYMENT_CAPTURED)/i);
+            const stoppingRuleLabel = stoppingRuleMatch ? stoppingRuleMatch[1].replace(/_/g, ' ').toLowerCase() : null;
             return (
               <section className="detail-panel escalation-panel">
                 <div className="panel-heading">
                   <div>
-                    <span className="eyebrow">Escalation</span>
-                    <h2>Automation stopped safely</h2>
+                    <span className="eyebrow">{isPolicyBlock ? 'Policy decision' : 'Stopping rule'}</span>
+                    <h2>{isPolicyBlock ? 'Policy blocked this action' : 'Automation stopped — requires human review'}</h2>
                   </div>
                   <AlertIcon />
                 </div>
                 <div className="escalation-summary">
                   <p>
-                    <strong>Automation stopped.</strong> {escalationAction.policyDecision?.reason || 'Maximum automated attempts reached.'}
+                    <strong>{isPolicyBlock ? 'Policy blocked.' : 'Automation stopped.'}</strong>{' '}
+                    {escalationReason}
                   </p>
                   <div className="escalation-meta">
                     <span>
-                      Reason <b>{escalationAction.policyDecision?.reason || 'Exhausted automated channels'}</b>
+                      {isPolicyBlock ? 'Policy' : 'Rule'} <b>{isPolicyBlock ? 'Merchant policy' : (stoppingRuleLabel || 'Safety rule')}</b>
                     </span>
                     <span>
-                      Escalated at <b>{dateTime(escalationAction.createdAt)}</b>
+                      {isPolicyBlock ? 'Blocked' : 'Escalated'} at <b>{dateTime(escalationAction.createdAt)}</b>
                     </span>
                     <span>
-                      Status <StatusBadge value="ESCALATED" />
+                      Status{' '}
+                      <StatusBadge
+                        value={isPolicyBlock ? 'POLICY_BLOCKED' : 'ESCALATED'}
+                        tone={isPolicyBlock ? 'danger' : 'warning'}
+                      />
                     </span>
                   </div>
+                  {isStoppingRule && (
+                    <div className="escalation-next-step">
+                      <AlertTriangle size={14} />
+                      <span>Next step: human review required</span>
+                    </div>
+                  )}
                   {escalationAction.recommendation?.rationale && (
                     <div className="escalation-context">
                       <span className="field-label">Context for human reviewer</span>
@@ -1516,9 +1560,9 @@ function CaseDetail() {
           <section className="detail-panel">
             <div className="panel-heading">
               <div>
-                <span className="eyebrow">AI analysis</span>
+                <span className="eyebrow">Recommendation</span>
                 <h2>
-                  Recommendation &amp; policy decision
+                  AI or deterministic recommendation &amp; policy decision
                 </h2>
               </div>
 
@@ -1582,21 +1626,19 @@ function CaseDetail() {
                   <span>
                     Source{' '}
                     <b>
-                      {recommendation.source ||
-                        recommendation.recoveryAction
-                          ?.recommendation?.source ||
-                        'System fallback'}
+                      {recommendationSourceLabel(recommendation)}
                     </b>
                   </span>
-                </div>
 
-                {actionStatus && (
-                  <div className="execution-status">
-                    <span className="field-label">
-                      Recovery action status
-                    </span>
+                  {actionStatus && (
+                    <div className="execution-status">
+                      <span className="field-label">
+                        Recovery action status
+                      </span>
 
-                    <StatusBadge value={actionStatus} />
+                      <StatusBadge value={actionStatus} />
+                    </div>
+                  )}
                   </div>
                 )}
 
@@ -1676,9 +1718,9 @@ function CaseDetail() {
             )}
 
             <EvidenceNote>
-              Recoveries are reflected as historical completed
-              actions, and a recovered case cannot generate a
-              new actionable recommendation.
+              AI recommends. Policy decides. A payment link being
+              created is not a recovery &mdash; only provider-confirmed
+              evidence marks money as recovered.
             </EvidenceNote>
           </section>
         </div>
@@ -2062,10 +2104,7 @@ function LegacyCaseDetail() {
                   <span>
                     Source{' '}
                     <b>
-                      {recommendation.source ||
-                        recommendation.recoveryAction
-                          ?.recommendation?.source ||
-                        'System fallback'}
+                      {recommendationSourceLabel(recommendation)}
                     </b>
                   </span>
                 </div>
@@ -2115,7 +2154,7 @@ function LegacyCaseDetail() {
             </div>
 
             <div className="state-rail">
-              <StateRail active={item.status} />
+              <StateRail caseData={item} />
             </div>
 
             <div className="detail-pairs stacked">
@@ -2173,73 +2212,161 @@ function LegacyCaseDetail() {
   );
 }
 
-function StateRail({ active }) {
-  const states = [
-    'DETECTED',
-    'DIAGNOSED',
-    'RECOMMENDED',
-    'POLICY_ALLOWED',
-    'ACTION_PENDING',
-    'RECOVERED',
+function StateRail({ caseData }) {
+  const actions = caseData.recoveryActions || [];
+  const hasDiagnosis = Boolean(caseData.diagnosis?.explanation);
+  const hasRecommendation = actions.length > 0;
+  const hasPolicyAllowed = actions.some(
+    (a) =>
+      ['POLICY_ALLOWED', 'EXECUTING', 'EXECUTED'].includes(a.status) ||
+      a.execution?.result === 'PAYMENT_LINK_CREATED' ||
+      a.execution?.result === 'PAYMENT_CONFIRMED'
+  );
+  const hasExecuted = actions.some((a) => a.status === 'EXECUTED');
+  const isEscalated = actions.some((a) => a.type === 'ESCALATE_TO_HUMAN');
+  const isPolicyBlocked = caseData.status === 'POLICY_BLOCKED';
+  const isRecovered = caseData.status === 'RECOVERED';
+  const hasStoppingRule = isEscalated && actions.some((a) => {
+    const reason = a.policyDecision?.reason || '';
+    return /retry count|contacted|exhausted|cooldown|fatigue|automation channels/i.test(reason);
+  });
+
+  const stages = [
+    { name: 'DETECTED', reached: true },
+    { name: 'DIAGNOSED', reached: hasDiagnosis },
+    { name: 'RECOMMENDED', reached: hasRecommendation },
   ];
 
-  const index = states.indexOf(active);
+  if (isEscalated && hasStoppingRule) {
+    stages.push({ name: 'POLICY EVALUATED', reached: true, tone: 'success' });
+    stages.push({ name: 'ESCALATED', reached: true, tone: 'warning' });
+  } else if (isEscalated || (isPolicyBlocked && !hasPolicyAllowed)) {
+    stages.push({ name: 'POLICY BLOCKED', reached: true, tone: 'danger' });
+  } else {
+    stages.push({
+      name: 'POLICY ALLOWED',
+      reached: hasPolicyAllowed,
+      tone: hasPolicyAllowed ? 'success' : null,
+    });
+  }
+
+  stages.push({ name: 'EXECUTED', reached: hasExecuted });
+  stages.push({
+    name: isRecovered ? 'RECOVERED' : 'NOT RECOVERED',
+    reached: isRecovered,
+    tone: isRecovered ? 'success' : null,
+  });
 
   return (
     <>
-      {states.map((state, current) => (
+      {stages.map((stage, idx) => (
         <div
-          className={`state-step ${
-            current <= index ? 'done' : ''
-          } ${state === active ? 'current' : ''}`}
-          key={state}
+          className={`state-step ${stage.reached ? 'done' : ''} ${stage.tone ? `tone-${stage.tone}` : ''}`}
+          key={stage.name}
         >
-          <span>
-            {current < index ? '✓' : current + 1}
-          </span>
+          <span>{stage.reached ? '✓' : idx + 1}</span>
 
-          <strong>{label(state)}</strong>
+          <strong>{label(stage.name)}</strong>
         </div>
       ))}
     </>
   );
 }
 
-function Timeline({ events }) {
+function Timeline({ events, groupDemo = false }) {
+  if (!groupDemo) {
+    return (
+      <div className="timeline">
+        {[...events].reverse().map((event) => (
+          <TimelineItem event={event} key={event.id || `${event.type}-${event.createdAt}`} />
+        ))}
+      </div>
+    );
+  }
+
+  const demo = events.filter((e) => isDemoEvent(e));
+  const journey = events.filter((e) => !isDemoEvent(e));
+
   return (
     <div className="timeline">
-      {[...events].reverse().map((event) => (
-        <div
-          className="timeline-item"
-          key={
-            event.id ||
-            `${event.type}-${event.createdAt}`
-          }
-        >
-          <span className="timeline-dot" />
-
-          <div>
-            <div className="timeline-meta">
-              <strong>{label(event.type)}</strong>
-              <time>{dateTime(event.createdAt)}</time>
-            </div>
-
-            <p>
-              {event.reason ||
-                event.result ||
-                'Event recorded.'}
-            </p>
-
-            {event.action && (
-              <span className="timeline-tag">
-                {label(event.action)}
-              </span>
-            )}
+      {demo.length > 0 && (
+        <div className="timeline-group">
+          <div className="timeline-group-head">
+            <span className="timeline-group-dot demo" />
+            <span className="timeline-group-label">Development / demo history</span>
+            <span className="timeline-group-count">{demo.length}</span>
           </div>
+          {[...demo].reverse().map((event) => (
+            <TimelineItem event={event} demo key={event.id || `${event.type}-${event.createdAt}`} />
+          ))}
         </div>
-      ))}
+      )}
+      {journey.length > 0 && (
+        <div className="timeline-group">
+          <div className="timeline-group-head">
+            <span className="timeline-group-dot journey" />
+            <span className="timeline-group-label">Recovery journey</span>
+            <span className="timeline-group-count">{journey.length}</span>
+          </div>
+          {[...journey].reverse().map((event) => (
+            <TimelineItem event={event} key={event.id || `${event.type}-${event.createdAt}`} />
+          ))}
+        </div>
+      )}
     </div>
   );
+}
+
+function TimelineItem({ event, demo = false }) {
+  const isAiEvent = event.type === 'AI_RECOMMENDATION_GENERATED';
+  const isFallbackEvent = event.type === 'AI_FALLBACK_USED';
+  const source = event.metadata?.source || event.metadata?.provider;
+  return (
+    <div className={`timeline-item ${demo ? 'is-demo' : ''} ${isAiEvent ? 'is-ai' : ''} ${isFallbackEvent ? 'is-fallback' : ''}`}>
+      <span className="timeline-dot" />
+
+      <div>
+        <div className="timeline-meta">
+          <strong>{label(event.type)}</strong>
+          {isAiEvent && source && (
+            <span className="timeline-source ai">
+              <Sparkles size={11} /> AI recommendation
+            </span>
+          )}
+          {isFallbackEvent && (
+            <span className="timeline-source fallback">
+              <ShieldCheck size={11} /> Deterministic fallback
+            </span>
+          )}
+          <time>{dateTime(event.createdAt)}</time>
+        </div>
+
+        <p>
+          {event.reason ||
+            event.result ||
+            'Event recorded.'}
+        </p>
+
+        {event.action && (
+          <span className="timeline-tag">
+            {label(event.action)}
+          </span>
+        )}
+
+        {demo && (
+          <span className="timeline-demo-badge">DEMO</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function isDemoEvent(event) {
+  if (!event) return false;
+  const reason = String(event.reason || '').toLowerCase();
+  if (reason.includes('development demo') || reason.includes('development-only')) return true;
+  if (event.providerEventId && String(event.providerEventId).startsWith('demo:')) return true;
+  return false;
 }
 
 function PaymentDetail() {
@@ -2402,7 +2529,7 @@ function Actions() {
       <PageHeader
         eyebrow="Operations / Actions"
         title="Recovery actions"
-        description="A read-only ledger of what RecoverAI recommended, blocked, or executed."
+        description="A read-only ledger of what RecoverAI recommended, what policy decided, and what actually happened."
         action={
           <button
             className="secondary-button"
@@ -2424,14 +2551,14 @@ function Actions() {
         <div className="table-shell">
           <table>
             <thead>
-               <tr>
-                <th>Action</th>
-                <th>Recovery case</th>
-                <th>Status</th>
-                <th>Policy / stopping</th>
-                <th>Execution / outcome</th>
-                <th>Timestamp</th>
-              </tr>
+                <tr>
+                 <th>Action</th>
+                 <th>Recovery case</th>
+                 <th>Status</th>
+                 <th>Policy / stopping</th>
+                 <th>Execution / outcome</th>
+                 <th>Timestamp</th>
+               </tr>
             </thead>
 
             <tbody>
@@ -2463,36 +2590,42 @@ function Actions() {
                     />
                   </td>
 
-                  <td>
-                    {itemAction.policyDecision
-                      ?.decision ? (
-                      <StatusBadge
-                        value={
-                          itemAction.policyDecision
-                            .decision
-                        }
-                      />
-                    ) : (
-                      <span className="muted">
-                        Not evaluated
-                      </span>
-                    )}
-                    {itemAction.policyDecision
-                      ?.reason && (
-                      <div className="cell-reason">
-                        {itemAction.policyDecision.reason.length > 60
-                          ? `${itemAction.policyDecision.reason.slice(0, 60)}...`
-                          : itemAction.policyDecision.reason}
-                      </div>
-                    )}
-                  </td>
+                    <td className="policy-cell">
+                      {itemAction.policyDecision
+                        ?.decision ? (
+                        <>
+                          <StatusBadge
+                            value={
+                              itemAction.policyDecision
+                                .decision
+                            }
+                          />
+                          <span className={`cell-source ${decisionSource(itemAction)}`}>
+                            {decisionSource(itemAction) === 'stopping' ? 'Stopping rule' : 'Policy'}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="muted">
+                          Not evaluated
+                        </span>
+                      )}
+                      {itemAction.policyDecision
+                        ?.reason && (
+                        <div className="cell-reason">
+                          {itemAction.policyDecision.reason.length > 60
+                            ? `${itemAction.policyDecision.reason.slice(0, 60)}...`
+                            : itemAction.policyDecision.reason}
+                        </div>
+                      )}
+                    </td>
 
                   <td>
                     {itemAction.status === 'EXECUTED' &&
                     itemAction.paymentLink ? (
                       <>
-                        <span className="history-evidence paid">
-                          <CheckCircle2 size={13} /> Paid
+                        <span className={`history-evidence ${itemAction.paymentLink.providerPaymentId ? 'paid' : 'pending'}`}>
+                          <CheckCircle2 size={13} />
+                          {itemAction.paymentLink.providerPaymentId ? 'Recovered' : 'Payment link created'}
                         </span>
 
                         {itemAction.paymentLink
@@ -2521,12 +2654,9 @@ function Actions() {
                           </a>
                         )}
                       </>
-                    ) : itemAction.policyDecision
-                        ?.decision === 'BLOCKED' ? (
-                      <span className="history-evidence pending">
-                        {itemAction.policyDecision.reason ||
-                          'Blocked by policy'}
-                      </span>
+                    ) : itemAction.status === 'POLICY_BLOCKED' ||
+                        itemAction.status === 'BLOCKED' ? (
+                      <span className="muted">Not executed</span>
                     ) : (
                       <span className="muted">
                         {label(
@@ -2569,6 +2699,7 @@ function Audit() {
   const [query, setQuery] = useState(
     params.get('recoveryCase') || ''
   );
+  const [showDemo, setShowDemo] = useState(false);
 
   const {
     loading,
@@ -2593,6 +2724,8 @@ function Audit() {
   const eventTypes = [
     ...new Set(events.map((event) => event.type)),
   ];
+
+  const demoCount = events.filter((e) => isDemoEvent(e)).length;
 
   return (
     <>
@@ -2641,6 +2774,16 @@ function Audit() {
             ))}
           </select>
         </div>
+
+        {demoCount > 0 && (
+          <button
+            className={`filter-toggle ${showDemo ? 'active' : ''}`}
+            onClick={() => setShowDemo((v) => !v)}
+          >
+            <Filter size={14} />
+            {showDemo ? 'Hiding' : 'Show'} demo ({demoCount})
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -2649,7 +2792,7 @@ function Audit() {
         <ErrorState message={error} />
       ) : filtered.length ? (
         <div className="audit-list">
-          <Timeline events={filtered} />
+          <Timeline events={showDemo ? filtered : filtered.filter((e) => !isDemoEvent(e))} groupDemo={showDemo} />
         </div>
       ) : (
         <EmptyState
@@ -2658,6 +2801,12 @@ function Audit() {
           text="Try another event type or recovery case ID."
         />
       )}
+
+      <EvidenceNote>
+        The audit stream is append-only. Development/demo events are
+        identified automatically and can be toggled above. Only
+        provider-confirmed events prove money was recovered.
+      </EvidenceNote>
     </>
   );
 }

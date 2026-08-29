@@ -86,16 +86,105 @@ class RecoveryRecommendationService {
     const aiOutcome = await this.aiAnalysisService.analyze({ payment, recoveryCase, policy });
     const recommendation = aiOutcome.recommendation;
 
+    const priorActions = await this.repository.findRecoveryActionsByCase(merchantId, recoveryCaseId, session);
+
     const policyResult = evaluateRecoveryAction({
       policy,
       payment,
       recoveryCase,
-      recommendation: { type: recommendation.action, confidence: recommendation.confidence }
+      recommendation: { type: recommendation.action, confidence: recommendation.confidence },
+      existingActions: priorActions
     });
 
-    const priorActions = newAttempt
-      ? await this.repository.findRecoveryActionsByCase(merchantId, recoveryCaseId, session)
-      : [];
+    if (policyResult.escalate) {
+      const escalationAction = await this.repository.createRecoveryAction(
+        {
+          merchant: merchantId,
+          payment: payment._id,
+          recoveryCase: recoveryCase._id,
+          type: 'ESCALATE_TO_HUMAN',
+          status: RECOVERY_ACTION_STATUS.POLICY_BLOCKED,
+          recommendation: {
+            source: aiOutcome.source === RECOMMENDATION_SOURCE.AI ? 'AI_AGENT' : 'SYSTEM',
+            confidence: recommendation.confidence,
+            rationale: policyResult.reason,
+            model: aiOutcome.model || aiOutcome.provider
+          },
+          policyDecision: { decision: POLICY_DECISION.BLOCKED, reason: policyResult.reason, evaluatedAt: new Date() },
+          idempotencyKey: `escalate:${recoveryCase._id}:${Date.now()}`
+        },
+        session
+      );
+
+      for (const event of aiOutcome.auditEvents) {
+        await this.repository.createAuditEvent(
+          {
+            merchant: merchantId,
+            payment: payment._id,
+            recoveryCase: recoveryCase._id,
+            providerEventId: internalAuditEventId(escalationAction.idempotencyKey, event.type),
+            ...event
+          },
+          session
+        );
+      }
+
+      await this.repository.createAuditEvent(
+        {
+          merchant: merchantId,
+          payment: payment._id,
+          recoveryCase: recoveryCase._id,
+          recoveryAction: escalationAction._id,
+          providerEventId: internalAuditEventId(escalationAction.idempotencyKey, AUDIT_EVENT_TYPE.ACTION_RECOMMENDED),
+          type: AUDIT_EVENT_TYPE.ACTION_RECOMMENDED,
+          actor: ACTOR_TYPE.SYSTEM,
+          reason: policyResult.reason,
+          action: 'ESCALATE_TO_HUMAN',
+          result: 'ESCALATED_TO_HUMAN',
+          metadata: {
+            confidence: recommendation.confidence,
+            source: aiOutcome.source,
+            provider: aiOutcome.provider,
+            model: aiOutcome.model,
+            stoppingRule: policyResult.stoppingRule,
+            stoppingEvidence: policyResult.stoppingEvidence,
+            originalRecommendation: recommendation.action,
+            escalationReason: policyResult.reason
+          }
+        },
+        session
+      );
+
+      await this.repository.createAuditEvent(
+        {
+          merchant: merchantId,
+          payment: payment._id,
+          recoveryCase: recoveryCase._id,
+          recoveryAction: escalationAction._id,
+          providerEventId: internalAuditEventId(escalationAction.idempotencyKey, AUDIT_EVENT_TYPE.POLICY_EVALUATED),
+          type: AUDIT_EVENT_TYPE.POLICY_EVALUATED,
+          actor: ACTOR_TYPE.SYSTEM,
+          reason: policyResult.reason,
+          policyDecision: 'BLOCKED',
+          action: 'ESCALATE_TO_HUMAN'
+        },
+        session
+      );
+
+      return {
+        duplicate: false,
+        escalated: true,
+        recoveryCaseId: String(recoveryCase._id),
+        paymentId: String(payment._id),
+        recommendation,
+        source: aiOutcome.source,
+        policyDecision: { decision: POLICY_DECISION.BLOCKED, reason: policyResult.reason },
+        stoppingRule: policyResult.stoppingRule,
+        stoppingEvidence: policyResult.stoppingEvidence,
+        recoveryAction: serializeAction(escalationAction)
+      };
+    }
+
     const priorMatchingAction = priorActions
       .filter((action) => action.type === recommendation.action)
       .sort((left, right) => attemptNumber(right) - attemptNumber(left))[0];
@@ -115,10 +204,6 @@ class RecoveryRecommendationService {
     const attempt = newAttempt ? nextAttemptNumber(priorActions, recommendation.action) : null;
     const idempotencyKey = buildIdempotencyKey({ recoveryCase, action: recommendation.action, attempt });
 
-    // Re-analyzing an unchanged case (same retry/contact counters) produces
-    // the same key, so it returns the earlier recommendation instead of
-    // writing a duplicate RecoveryAction + audit trail -- including the
-    // AI-stage audit events collected above, which are simply discarded.
     const existingAction = await this.repository.findRecoveryActionByIdempotencyKey(idempotencyKey, session);
     if (existingAction) {
       return {

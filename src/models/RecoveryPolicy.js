@@ -11,7 +11,9 @@ const recoveryPolicySchema = new mongoose.Schema(
       default: [RECOVERY_ACTION_TYPE.CUSTOMER_REMINDER, RECOVERY_ACTION_TYPE.ESCALATE_TO_HUMAN, RECOVERY_ACTION_TYPE.NO_ACTION]
     },
     minimumRecoveryConfidence: { type: Number, required: true, default: 0.7, min: 0, max: 1 },
-    maxCustomerContactAttempts: { type: Number, required: true, default: 1, min: 0 }
+    maxCustomerContactAttempts: { type: Number, required: true, default: 1, min: 0 },
+    cooldownMinutes: { type: Number, required: true, default: 60, min: 0 },
+    escalationCooldownMinutes: { type: Number, required: true, default: 1440, min: 0 }
   },
   { timestamps: true }
 );

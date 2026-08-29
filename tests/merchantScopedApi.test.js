@@ -237,6 +237,20 @@ test('merchant-scoped analytics excludes another merchant data', async (t) => {
       blockedActions: 0,
       failedExecutions: 0,
       aiFallbacks: 0,
+      escalatedCases: 0,
+      escalatedAmount: 0,
+      stoppedActions: 0,
+      blockedAmount: 0,
+      inRecoveryAmount: 0,
+      unrecoveredAmount: 10000,
+      funnel: {
+        detected: { count: 1, amount: 10000 },
+        diagnosed: { count: 0, amount: 0 },
+        recommended: { count: 0, amount: 0 },
+        policyAllowed: { count: 0, amount: 0 },
+        executed: { count: 0, amount: 0 },
+        recovered: { count: 0, amount: 0 }
+      },
       breakdown: {
         recoveryAction: {},
         failureCategory: { TEMPORARY: 1 },

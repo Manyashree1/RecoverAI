@@ -1,5 +1,5 @@
 const { AnalyticsRepository } = require('../repositories/analyticsRepository');
-const { OPEN_RECOVERY_CASE_STATUSES, PAYMENT_STATUS, RECOVERY_ACTION_STATUS, AUDIT_EVENT_TYPE, ACTOR_TYPE } = require('../constants/enums');
+const { OPEN_RECOVERY_CASE_STATUSES, PAYMENT_STATUS, RECOVERY_ACTION_STATUS, RECOVERY_ACTION_TYPE, RECOVERY_CASE_STATUS, AUDIT_EVENT_TYPE, ACTOR_TYPE } = require('../constants/enums');
 const { classifyFailure } = require('./recoveryIntelligenceService');
 
 class AnalyticsService {
@@ -21,6 +21,20 @@ function calculateOverview({ payments = [], recoveryCases = [], recoveryActions 
   const recoveredRevenue = sum(recovered.map((recoveryCase) => recoveryCase.recoveredAmount));
   const attempts = recoveryActions.filter((action) => [RECOVERY_ACTION_STATUS.EXECUTING, RECOVERY_ACTION_STATUS.EXECUTED, RECOVERY_ACTION_STATUS.FAILED].includes(action.status));
 
+  const diagnosedCases = recoveryCases.filter((recoveryCase) => recoveryCase.diagnosis && recoveryCase.diagnosis.explanation);
+  const recommendedCases = recoveryCases.filter((recoveryCase) => (actionsByCase.get(String(recoveryCase._id)) || []).length > 0);
+  const policyAllowedCases = recoveryCases.filter((recoveryCase) => (actionsByCase.get(String(recoveryCase._id)) || []).some((action) => action.status === RECOVERY_ACTION_STATUS.POLICY_ALLOWED));
+  const executedCases = recoveryCases.filter((recoveryCase) => (actionsByCase.get(String(recoveryCase._id)) || []).some((action) => action.status === RECOVERY_ACTION_STATUS.EXECUTED));
+  const escalatedCases = recoveryCases.filter((recoveryCase) => (actionsByCase.get(String(recoveryCase._id)) || []).some((action) => action.type === RECOVERY_ACTION_TYPE.ESCALATE_TO_HUMAN));
+  const blockedActions = recoveryActions.filter((action) => [RECOVERY_ACTION_STATUS.POLICY_BLOCKED, RECOVERY_ACTION_STATUS.BLOCKED].includes(action.status));
+  const stoppedActions = recoveryActions.filter((action) => action.policyDecision && action.policyDecision.reason && action.policyDecision.reason.includes('stopping'));
+
+  const inRecoveryAmount = sum(recoveryCases.filter((recoveryCase) => [RECOVERY_CASE_STATUS.ACTION_PENDING, RECOVERY_CASE_STATUS.ACTION_EXECUTING].includes(recoveryCase.status)).map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0));
+  const recoveredAmount = sum(recovered.map((recoveryCase) => recoveryCase.recoveredAmount));
+  const blockedAmount = sum(blockedActions.map((action) => paymentById.get(String(action.payment))?.amount || 0));
+  const escalatedAmount = sum(escalatedCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0));
+  const unrecoveredAmount = sum(recoveryCases.filter((recoveryCase) => ![RECOVERY_CASE_STATUS.RECOVERED, RECOVERY_CASE_STATUS.CLOSED].includes(recoveryCase.status)).map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0)) - recoveredAmount;
+
   return {
     revenueAtRisk,
     eligibleRecoveryCases: eligible.length,
@@ -29,9 +43,23 @@ function calculateOverview({ payments = [], recoveryCases = [], recoveryActions 
     recoveredRevenue,
     recoveryRate: rate(recovered.length, eligible.length),
     recoveryValueRate: rate(recoveredRevenue, revenueAtRisk),
-    blockedActions: recoveryActions.filter((action) => [RECOVERY_ACTION_STATUS.POLICY_BLOCKED, RECOVERY_ACTION_STATUS.BLOCKED].includes(action.status)).length,
+    blockedActions: blockedActions.length,
     failedExecutions: recoveryActions.filter((action) => action.status === RECOVERY_ACTION_STATUS.FAILED).length,
     aiFallbacks: auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.AI_FALLBACK_USED).length,
+    escalatedCases: escalatedCases.length,
+    escalatedAmount,
+    stoppedActions: stoppedActions.length,
+    blockedAmount,
+    inRecoveryAmount,
+    unrecoveredAmount: unrecoveredAmount > 0 ? unrecoveredAmount : 0,
+    funnel: {
+      detected: { count: recoveryCases.length, amount: sum(recoveryCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0)) },
+      diagnosed: { count: diagnosedCases.length, amount: sum(diagnosedCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0)) },
+      recommended: { count: recommendedCases.length, amount: sum(recommendedCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0)) },
+      policyAllowed: { count: policyAllowedCases.length, amount: sum(policyAllowedCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0)) },
+      executed: { count: executedCases.length, amount: sum(executedCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0)) },
+      recovered: { count: recovered.length, amount: recoveredAmount }
+    },
     breakdown: {
       recoveryAction: countBy(recoveryActions, (action) => action.type),
       failureCategory: countBy(recoveryCases, (recoveryCase) => classifyFailure(paymentById.get(String(recoveryCase.payment))?.failure?.code)),

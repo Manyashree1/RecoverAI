@@ -1640,7 +1640,7 @@ function CaseDetail() {
                     </div>
                   )}
                   </div>
-                )}
+
 
                 {actionStatus === 'FAILED' &&
                   !isTerminal && (

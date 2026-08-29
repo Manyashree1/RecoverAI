@@ -9,6 +9,16 @@ class AnalyticsService {
     const data = await this.repository.loadMerchantAnalytics(merchantId);
     return calculateOverview(data);
   }
+
+  async outcomes(merchantId) {
+    const data = await this.repository.loadMerchantAnalytics(merchantId);
+    return calculateOutcomes(data);
+  }
+
+  async performance(merchantId) {
+    const data = await this.repository.loadMerchantAnalytics(merchantId);
+    return calculatePerformance(data);
+  }
 }
 
 function calculateOverview({ payments = [], recoveryCases = [], recoveryActions = [], auditEvents = [] }) {
@@ -68,6 +78,100 @@ function calculateOverview({ payments = [], recoveryCases = [], recoveryActions 
   };
 }
 
+function calculateOutcomes({ payments = [], recoveryCases = [], recoveryActions = [], auditEvents = [] }) {
+  const paymentById = new Map(payments.map((payment) => [String(payment._id), payment]));
+  const evidenceCases = new Set(auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED && event.actor === ACTOR_TYPE.RAZORPAY).map((event) => String(event.recoveryCase)));
+  const actionsByCase = groupBy(recoveryActions, (action) => String(action.recoveryCase));
+
+  const recoveredCases = new Set(
+    recoveryCases
+      .filter((recoveryCase) => hasRecoveryEvidence(recoveryCase, actionsByCase.get(String(recoveryCase._id)), evidenceCases))
+      .map((recoveryCase) => String(recoveryCase._id))
+  );
+
+  const outcomes = {};
+  for (const actionType of Object.values(RECOVERY_ACTION_TYPE)) {
+    if (actionType === RECOVERY_ACTION_TYPE.NO_ACTION) continue;
+    const typeActions = recoveryActions.filter((action) => action.type === actionType);
+    const recommended = typeActions.length;
+    const executed = typeActions.filter((action) => action.status === RECOVERY_ACTION_STATUS.EXECUTED).length;
+    const recovered = typeActions.filter((action) => recoveredCases.has(String(action.recoveryCase))).length;
+    outcomes[actionType] = {
+      recommended,
+      executed,
+      recovered,
+      recoveryRate: rate(recovered, recommended),
+      averageRecoveredAmount: executed > 0 ? sum(typeActions.filter((action) => recoveredCases.has(String(action.recoveryCase))).map((action) => paymentById.get(String(action.payment))?.amount || 0)) / executed : 0
+    };
+  }
+
+  return { outcomes };
+}
+
+function calculatePerformance({ payments = [], recoveryCases = [], recoveryActions = [], auditEvents = [] }) {
+  const evidenceCases = new Set(auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED && event.actor === ACTOR_TYPE.RAZORPAY).map((event) => String(event.recoveryCase)));
+  const actionsByCase = groupBy(recoveryActions, (action) => String(action.recoveryCase));
+  const paymentById = new Map(payments.map((payment) => [String(payment._id), payment]));
+
+  const recoveredCases = recoveryCases.filter((recoveryCase) => hasRecoveryEvidence(recoveryCase, actionsByCase.get(String(recoveryCase._id)), evidenceCases));
+  const eligibleCases = recoveryCases.filter((recoveryCase) => OPEN_RECOVERY_CASE_STATUSES.includes(recoveryCase.status) && paymentById.get(String(recoveryCase.payment))?.status === PAYMENT_STATUS.FAILED);
+  const totalEligible = eligibleCases.length;
+
+  const daily = {};
+  for (const recoveryCase of recoveredCases) {
+    const day = dayKey(recoveryCase.resolvedAt || recoveryCase.createdAt);
+    const amount = recoveryCase.recoveredAmount || 0;
+    if (!daily[day]) daily[day] = { recoveredCount: 0, recoveredAmount: 0, eligibleCount: 0 };
+    daily[day].recoveredCount += 1;
+    daily[day].recoveredAmount += amount;
+  }
+  for (const recoveryCase of eligibleCases) {
+    const day = dayKey(recoveryCase.createdAt);
+    if (!daily[day]) daily[day] = { recoveredCount: 0, recoveredAmount: 0, eligibleCount: 0 };
+    daily[day].eligibleCount += 1;
+  }
+
+  const series = Object.entries(daily)
+    .map(([day, values]) => ({
+      day,
+      recoveredCount: values.recoveredCount,
+      recoveredAmount: values.recoveredAmount,
+      eligibleCount: values.eligibleCount,
+      recoveryRate: rate(values.recoveredCount, values.eligibleCount)
+    }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+
+  const totalRecovered = recoveredCases.length;
+  const totalRecoveredAmount = sum(recoveredCases.map((recoveryCase) => recoveryCase.recoveredAmount));
+  const avgTimeToRecovery = recoveredCases.length > 0
+    ? recoveredCases.reduce((total, recoveryCase) => {
+        const created = new Date(recoveryCase.createdAt).getTime();
+        const resolved = new Date(recoveryCase.resolvedAt || recoveryCase.createdAt).getTime();
+        return total + Math.max(0, resolved - created);
+      }, 0) / recoveredCases.length
+    : 0;
+
+  return {
+    summary: {
+      totalEligible,
+      totalRecovered,
+      recoveryRate: rate(totalRecovered, totalEligible),
+      recoveredAmount: totalRecoveredAmount,
+      averageRecoveredAmount: totalRecovered > 0 ? totalRecoveredAmount / totalRecovered : 0,
+      averageTimeToRecoveryMs: avgTimeToRecovery
+    },
+    series
+  };
+}
+
+function dayKey(date) {
+  const d = new Date(date);
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function hasRecoveryEvidence(recoveryCase, actions = [], evidenceCases) {
   return recoveryCase.status === 'RECOVERED' && recoveryCase.recoveredAmount > 0 && evidenceCases.has(String(recoveryCase._id)) && actions.some((action) => action.status === RECOVERY_ACTION_STATUS.EXECUTED && action.execution?.providerReference);
 }
@@ -76,4 +180,4 @@ function rate(numerator, denominator) { return denominator > 0 ? Number((numerat
 function groupBy(items, key) { return items.reduce((groups, item) => { const value = key(item); (groups.get(value) || groups.set(value, []).get(value)).push(item); return groups; }, new Map()); }
 function countBy(items, key) { return items.reduce((result, item) => { const value = key(item) || 'UNKNOWN'; result[value] = (result[value] || 0) + 1; return result; }, {}); }
 
-module.exports = { AnalyticsService, calculateOverview, hasRecoveryEvidence };
+module.exports = { AnalyticsService, calculateOverview, calculateOutcomes, calculatePerformance, hasRecoveryEvidence };

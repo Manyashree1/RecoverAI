@@ -40,7 +40,7 @@ test.before(async () => {
   });
   await MerchantUser.create({
     merchant: otherMerchant._id,
-    email: 'other@test.com',
+    email: 'other-policy@test.com',
     passwordHash,
     role: 'MERCHANT_ADMIN',
     status: 'ACTIVE'

@@ -96,6 +96,7 @@ function App() {
         <Route path="/recovery-cases/:id" element={<CaseDetail />} />
         <Route path="/recovery-actions" element={<Actions />} />
         <Route path="/recovery-policy" element={<Policy />} />
+        <Route path="/recovery-intelligence" element={<Intelligence />} />
         <Route path="/audit" element={<Audit />} />
       </Route>
 
@@ -227,6 +228,7 @@ function Shell({ onLogout }) {
     ['/recovery-cases', 'Recovery Cases', RefreshCw],
     ['/recovery-actions', 'Recovery Actions', Zap],
     ['/recovery-policy', 'Recovery Policy', ShieldCheck],
+    ['/recovery-intelligence', 'Recovery Intelligence', Activity],
     ['/audit', 'Audit Trail', FileSearch],
   ];
 
@@ -966,13 +968,25 @@ function CaseDetail() {
   const [executionResult, setExecutionResult] = useState(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [scoreData, setScoreData] = useState(null);
 
   const caseRequest = useRequest(
     () => api.case(id),
     [id]
   );
 
+  const scoreRequest = useRequest(
+    () => api.caseScore(id),
+    [id]
+  );
+
   const item = caseRequest.data?.data;
+
+  useEffect(() => {
+    if (!caseRequest.loading && !caseRequest.error && item) {
+      setScoreData(scoreRequest.data?.data || null);
+    }
+  }, [caseRequest.loading, caseRequest.error, item, scoreRequest.data]);
 
   const runRecommendation = async () => {
     setBusy(true);
@@ -1557,6 +1571,44 @@ function CaseDetail() {
                   </div>
                 ))}
               </div>
+            </section>
+          )}
+
+          {scoreData && (
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Recovery score</span>
+                  <h2>Deterministic intelligence</h2>
+                </div>
+              </div>
+              <div className="analysis-grid">
+                <div>
+                  <span className="field-label">Score</span>
+                  <strong>{scoreData.score}/100</strong>
+                </div>
+                <div>
+                  <span className="field-label">Classification</span>
+                  <strong>{label(scoreData.classification)}</strong>
+                </div>
+                <div>
+                  <span className="field-label">Confidence</span>
+                  <strong>{percent(scoreData.confidence)}</strong>
+                </div>
+              </div>
+              {scoreData.explanation?.components?.length > 0 && (
+                <div style={{ marginTop: '14px' }}>
+                  <span className="field-label">Score breakdown</span>
+                  <ul className="evidence-list">
+                    {scoreData.explanation.components.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <EvidenceNote>
+                This is a deterministic recovery score derived from persisted evidence only. It is not an ML prediction and no customer history is fabricated.
+              </EvidenceNote>
             </section>
           )}
 
@@ -3137,6 +3189,225 @@ function Audit() {
         identified automatically and can be toggled above. Only
         provider-confirmed events prove money was recovered.
       </EvidenceNote>
+    </>
+  );
+}
+
+function Intelligence() {
+  const [activeTab, setActiveTab] = useState('performance');
+  const [performanceData, setPerformanceData] = useState(null);
+  const [outcomesData, setOutcomesData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    Promise.all([
+      api.performance().catch((err) => ({ error: err.message })),
+      api.outcomes().catch((err) => ({ error: err.message }))
+    ]).then(([perf, outcomes]) => {
+      if (cancelled) return;
+      if (perf.error) setError(perf.error);
+      else setPerformanceData(perf.data);
+      if (outcomes.error) setError(outcomes.error);
+      else setOutcomesData(outcomes.data);
+      setLoading(false);
+    }).catch((err) => {
+      if (cancelled) return;
+      setError(err.message);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader eyebrow="Intelligence" title="Recovery intelligence" description="Deterministic recovery performance and action effectiveness." />
+        <LoadingState text="Loading recovery intelligence" />
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <>
+        <PageHeader eyebrow="Intelligence" title="Recovery intelligence" description="Deterministic recovery performance and action effectiveness." />
+        <ErrorState message={error} />
+      </>
+    );
+  }
+
+  const summary = performanceData?.summary || {};
+  const series = performanceData?.series || [];
+  const outcomes = outcomesData?.outcomes || {};
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Intelligence"
+        title="Recovery intelligence"
+        description="Deterministic recovery performance and action effectiveness."
+      />
+
+      <div className="toolbar">
+        <div className="tab-bar">
+          <button className={`tab ${activeTab === 'performance' ? 'active' : ''}`} onClick={() => setActiveTab('performance')}>Performance</button>
+          <button className={`tab ${activeTab === 'outcomes' ? 'active' : ''}`} onClick={() => setActiveTab('outcomes')}>Action effectiveness</button>
+        </div>
+      </div>
+
+      {activeTab === 'performance' && (
+        <div className="detail-grid">
+          <div className="detail-main">
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Recovery performance</span>
+                  <h2>Overall effectiveness</h2>
+                </div>
+              </div>
+              <div className="analysis-grid">
+                <div>
+                  <span className="field-label">Eligible cases</span>
+                  <strong>{summary.totalEligible ?? 0}</strong>
+                </div>
+                <div>
+                  <span className="field-label">Recovered</span>
+                  <strong>{summary.totalRecovered ?? 0}</strong>
+                </div>
+                <div>
+                  <span className="field-label">Recovery rate</span>
+                  <strong>{percent(summary.recoveryRate)}</strong>
+                </div>
+                <div>
+                  <span className="field-label">Revenue recovered</span>
+                  <strong>{currency(summary.recoveredAmount)}</strong>
+                </div>
+                <div>
+                  <span className="field-label">Avg. recovered amount</span>
+                  <strong>{currency(summary.averageRecoveredAmount)}</strong>
+                </div>
+                <div>
+                  <span className="field-label">Avg. time to recovery</span>
+                  <strong>{summary.averageTimeToRecoveryMs ? `${Math.round(summary.averageTimeToRecoveryMs / 1000 / 60)} min` : 'N/A'}</strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Daily trend</span>
+                  <h2>Recovery performance over time</h2>
+                </div>
+              </div>
+              {series.length === 0 ? (
+                <EmptyState icon={BarChart3} title="No data yet" text="Recovery performance data will appear once cases reach terminal states." />
+              ) : (
+                <div className="ledger-wrapper">
+                  <table className="ledger">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Eligible</th>
+                        <th>Recovered</th>
+                        <th>Recovery rate</th>
+                        <th>Recovered amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {series.map((row) => (
+                        <tr key={row.day}>
+                          <td>{row.day}</td>
+                          <td>{row.eligibleCount}</td>
+                          <td>{row.recoveredCount}</td>
+                          <td>{percent(row.recoveryRate)}</td>
+                          <td>{currency(row.recoveredAmount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </div>
+
+          <aside className="detail-side">
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Score</span>
+                  <h2>Deterministic</h2>
+                </div>
+              </div>
+              <EvidenceNote>
+                Recovery intelligence is derived deterministically from persisted evidence only. No ML model is used. Historical customer behavior is never fabricated.
+              </EvidenceNote>
+            </section>
+          </aside>
+        </div>
+      )}
+
+      {activeTab === 'outcomes' && (
+        <div className="detail-grid">
+          <div className="detail-main">
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Action effectiveness</span>
+                  <h2>What actually recovers money</h2>
+                </div>
+              </div>
+              {Object.keys(outcomes).length === 0 ? (
+                <EmptyState icon={BarChart3} title="No outcome data yet" text="Outcome data requires provider-confirmed recoveries." />
+              ) : (
+                <div className="ledger-wrapper">
+                  <table className="ledger">
+                    <thead>
+                      <tr>
+                        <th>Action</th>
+                        <th>Recommended</th>
+                        <th>Executed</th>
+                        <th>Recovered</th>
+                        <th>Recovery rate</th>
+                        <th>Avg. recovered amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(outcomes).map(([action, data]) => (
+                        <tr key={action}>
+                          <td>{label(action)}</td>
+                          <td>{data.recommended}</td>
+                          <td>{data.executed}</td>
+                          <td>{data.recovered}</td>
+                          <td>{percent(data.recoveryRate)}</td>
+                          <td>{currency(data.averageRecoveredAmount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </div>
+          <aside className="detail-side">
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Evidence</span>
+                  <h2>Provider-confirmed only</h2>
+                </div>
+              </div>
+              <EvidenceNote>
+                A recovery is only counted when Razorpay confirms it via a verified payment link event (RECOVERY_COMPLETED). Payment link creation alone does not count as recovery.
+              </EvidenceNote>
+            </section>
+          </aside>
+        </div>
+      )}
     </>
   );
 }

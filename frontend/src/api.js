@@ -41,10 +41,13 @@ export async function apiFetch(path, options = {}) {
 export const api = {
   login: (email, password) => apiFetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   overview: () => apiFetch('/api/analytics/overview'),
+  outcomes: () => apiFetch('/api/analytics/outcomes'),
+  performance: () => apiFetch('/api/analytics/performance'),
   payments: (params = {}) => apiFetch(`/api/payments?${new URLSearchParams(params)}`),
   payment: (id) => apiFetch(`/api/payments/${id}`),
   cases: (params = {}) => apiFetch(`/api/recovery-cases?${new URLSearchParams(params)}`),
   case: (id) => apiFetch(`/api/recovery-cases/${id}`),
+  caseScore: (id) => apiFetch(`/api/recovery-cases/${id}/score`),
   audit: (params = {}) => apiFetch(`/api/audit-events?${new URLSearchParams(params)}`),
   recoveryActions: (params = {}) => apiFetch(`/api/recovery-actions?${new URLSearchParams(params)}`),
   recommend: (id) => apiFetch(`/api/recovery-cases/${id}/recommendations`, { method: 'POST' }),

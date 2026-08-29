@@ -173,3 +173,11 @@
 .effect-allowed svg{flex:none}
 .effect-blocked{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid #4a3030;border-radius:6px;background:#1a1010;color:var(--red);font-size:12px;font-weight:600}
 .effect-blocked svg{flex:none}
+
+/* --- Phase 3: Recovery Intelligence --- */
+.evidence-list{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:6px}
+.evidence-list li{padding:6px 10px;background:#12232a;border:1px solid var(--line);border-radius:5px;color:var(--soft);font-size:12px}
+.tab-bar{display:flex;gap:8px;margin-bottom:18px}
+.tab{padding:9px 16px;border-radius:6px;border:1px solid var(--line);background:#111a23;color:var(--muted);font-size:13px;font-weight:600;transition:.2s}
+.tab:hover{border-color:#34525a;color:var(--text)}
+.tab.active{background:#1a3036;color:var(--text);border-color:var(--cyan)}

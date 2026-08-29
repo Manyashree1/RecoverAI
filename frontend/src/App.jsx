@@ -21,6 +21,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   ClipboardList,
+  Clock3,
   FileSearch,
   Filter,
   Lock,
@@ -94,6 +95,7 @@ function App() {
         <Route path="/recovery-cases" element={<RecoveryCases />} />
         <Route path="/recovery-cases/:id" element={<CaseDetail />} />
         <Route path="/recovery-actions" element={<Actions />} />
+        <Route path="/recovery-policy" element={<Policy />} />
         <Route path="/audit" element={<Audit />} />
       </Route>
 
@@ -224,6 +226,7 @@ function Shell({ onLogout }) {
     ['/payments', 'Payments', Receipt],
     ['/recovery-cases', 'Recovery Cases', RefreshCw],
     ['/recovery-actions', 'Recovery Actions', Zap],
+    ['/recovery-policy', 'Recovery Policy', ShieldCheck],
     ['/audit', 'Audit Trail', FileSearch],
   ];
 
@@ -2684,6 +2687,333 @@ function Actions() {
           </span>
         )}
       </div>
+    </>
+  );
+}
+
+function Policy() {
+  const [policy, setPolicy] = useState(null);
+  const [form, setForm] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [dirty, setDirty] = useState(false);
+
+  const loadPolicy = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await api.policy();
+      setPolicy(result.data);
+      setForm({
+        maxAutomaticRetries: result.data.maxAutomaticRetries,
+        maxCustomerContactAttempts: result.data.maxCustomerContactAttempts,
+        cooldownMinutes: result.data.cooldownMinutes,
+        escalationCooldownMinutes: result.data.escalationCooldownMinutes,
+        allowedActions: [...(result.data.allowedActions || [])],
+        expectedVersion: result.data.version
+      });
+      setDirty(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPolicy();
+  }, []);
+
+  const updateField = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setDirty(true);
+    setSuccess('');
+    setError('');
+  };
+
+  const toggleAction = (action) => {
+    setForm((prev) => {
+      const current = prev.allowedActions || [];
+      const next = current.includes(action) ? current.filter((a) => a !== action) : [...current, action];
+      return { ...prev, allowedActions: next };
+    });
+    setDirty(true);
+    setSuccess('');
+    setError('');
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!form || saving) return;
+    setSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const payload = {
+        maxAutomaticRetries: form.maxAutomaticRetries,
+        maxCustomerContactAttempts: form.maxCustomerContactAttempts,
+        cooldownMinutes: form.cooldownMinutes,
+        escalationCooldownMinutes: form.escalationCooldownMinutes,
+        allowedActions: form.allowedActions,
+        expectedVersion: form.expectedVersion
+      };
+      const result = await api.updatePolicy(payload);
+      setPolicy(result.data);
+      setForm((prev) => ({ ...prev, expectedVersion: result.data.version }));
+      setDirty(false);
+      setSuccess('Policy updated successfully.');
+    } catch (err) {
+      if (err.message.includes('modified elsewhere')) {
+        setError('Policy was changed in another session. Refresh to see the latest version.');
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="Configuration / Policy"
+          title="Recovery policy"
+          description="Control how RecoverAI acts on failed payments for your merchant account."
+        />
+        <LoadingState text="Loading recovery policy" />
+      </>
+    );
+  }
+
+  if (!form) {
+    return (
+      <>
+        <PageHeader
+          eyebrow="Configuration / Policy"
+          title="Recovery policy"
+          description="Control how RecoverAI acts on failed payments for your merchant account."
+        />
+        <ErrorState message={error || 'Unable to load policy.'} />
+      </>
+    );
+  }
+
+  const actionOptions = [
+    { value: 'CUSTOMER_REMINDER', label: 'Customer Reminder', description: 'Create a payment link and send it to the customer.' },
+    { value: 'RETRY_PAYMENT', label: 'Retry Payment', description: 'Automatically retry the failed payment.' },
+    { value: 'PAYMENT_METHOD_UPDATE', label: 'Payment Method Update', description: 'Ask the customer to update their payment method.' },
+    { value: 'ESCALATE_TO_HUMAN', label: 'Escalate to Human', description: 'Route the case to a human reviewer.' }
+  ];
+
+  const allowedSet = new Set(form.allowedActions || []);
+  const blockedActions = actionOptions.filter((opt) => !allowedSet.has(opt.value));
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Configuration / Policy"
+        title="Recovery policy"
+        description="Control how RecoverAI acts on failed payments for your merchant account."
+        action={
+          policy?.updatedAt ? (
+            <span className="updated">
+              Last updated: {dateTime(policy.updatedAt)}
+            </span>
+          ) : null
+        }
+      />
+
+      <form onSubmit={submit}>
+        <div className="detail-grid">
+          <div className="detail-main">
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Allowed actions</span>
+                  <h2>What RecoverAI may do</h2>
+                </div>
+                <ShieldCheck size={21} />
+              </div>
+              <div className="policy-actions">
+                {actionOptions.map((opt) => (
+                  <label className={`policy-action ${allowedSet.has(opt.value) ? 'is-allowed' : ''}`} key={opt.value}>
+                    <input
+                      type="checkbox"
+                      checked={allowedSet.has(opt.value)}
+                      onChange={() => toggleAction(opt.value)}
+                    />
+                    <div>
+                      <strong>{opt.label}</strong>
+                      <span>{opt.description}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </section>
+
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Automation limits</span>
+                  <h2>Bounded execution</h2>
+                </div>
+                <Activity size={21} />
+              </div>
+              <div className="policy-fields">
+                <label className="policy-field">
+                  <span>
+                    <strong>Maximum automatic retries</strong>
+                    <small>How many times RecoverAI can retry a failed payment before escalating.</small>
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="10"
+                    value={form.maxAutomaticRetries}
+                    onChange={(e) => updateField('maxAutomaticRetries', Number(e.target.value))}
+                  />
+                </label>
+                <label className="policy-field">
+                  <span>
+                    <strong>Maximum customer contacts</strong>
+                    <small>How many times RecoverAI can contact a customer before stopping.</small>
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="10"
+                    value={form.maxCustomerContactAttempts}
+                    onChange={(e) => updateField('maxCustomerContactAttempts', Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Safety timing</span>
+                  <h2>Cooldown periods</h2>
+                </div>
+                <Clock3 size={21} />
+              </div>
+              <div className="policy-fields">
+                <label className="policy-field">
+                  <span>
+                    <strong>Recovery cooldown (minutes)</strong>
+                    <small>Minimum time between consecutive recovery actions on the same case.</small>
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="10080"
+                    value={form.cooldownMinutes}
+                    onChange={(e) => updateField('cooldownMinutes', Number(e.target.value))}
+                  />
+                </label>
+                <label className="policy-field">
+                  <span>
+                    <strong>Escalation cooldown (minutes)</strong>
+                    <small>Minimum time before a case can be escalated again after a prior escalation.</small>
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="43200"
+                    value={form.escalationCooldownMinutes}
+                    onChange={(e) => updateField('escalationCooldownMinutes', Number(e.target.value))}
+                  />
+                </label>
+              </div>
+            </section>
+
+            {error && <div className="form-error">{error}</div>}
+            {success && <div className="form-success">{success}</div>}
+
+            <div className="policy-footer">
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={saving || !dirty}
+              >
+                {saving ? (
+                  <>
+                    <span className="button-spinner" /> Saving
+                  </>
+                ) : (
+                  'Save policy'
+                )}
+              </button>
+              {dirty && <span className="unsaved-indicator">Unsaved changes</span>}
+            </div>
+          </div>
+
+          <aside className="detail-side">
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Policy status</span>
+                  <h2>Current effect</h2>
+                </div>
+              </div>
+              <div className="policy-status">
+                <div className="policy-status-row">
+                  <span className="status-dot active" />
+                  <span>Policy active</span>
+                </div>
+                <div className="policy-status-row muted">
+                  <span>Version {policy?.version ?? 0}</span>
+                </div>
+              </div>
+            </section>
+
+            <section className="detail-panel">
+              <div className="panel-heading">
+                <div>
+                  <span className="eyebrow">Allowed</span>
+                  <h2>RecoverAI may execute</h2>
+                </div>
+                <CheckCircle2 size={21} />
+              </div>
+              <div className="policy-effects">
+                {actionOptions.filter((opt) => allowedSet.has(opt.value)).map((opt) => (
+                  <span className="effect-allowed" key={opt.value}>
+                    <CheckCircle2 size={13} /> {opt.label}
+                  </span>
+                ))}
+              </div>
+            </section>
+
+            {blockedActions.length > 0 && (
+              <section className="detail-panel">
+                <div className="panel-heading">
+                  <div>
+                    <span className="eyebrow">Blocked</span>
+                    <h2>RecoverAI will not execute</h2>
+                  </div>
+                  <Lock size={21} />
+                </div>
+                <div className="policy-effects">
+                  {blockedActions.map((opt) => (
+                    <span className="effect-blocked" key={opt.value}>
+                      <X size={13} /> {opt.label}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <EvidenceNote>
+              RecoverAI recommends actions using AI or deterministic recovery
+              intelligence, but execution is always constrained by this merchant
+              policy and the safety stopping rules.
+            </EvidenceNote>
+          </aside>
+        </div>
+      </form>
     </>
   );
 }

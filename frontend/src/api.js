@@ -49,5 +49,7 @@ export const api = {
   recoveryActions: (params = {}) => apiFetch(`/api/recovery-actions?${new URLSearchParams(params)}`),
   recommend: (id) => apiFetch(`/api/recovery-cases/${id}/recommendations`, { method: 'POST' }),
   newRecoveryAttempt: (id) => apiFetch(`/api/recovery-cases/${id}/recovery-attempts`, { method: 'POST' }),
-  execute: (id) => apiFetch(`/api/recovery-actions/${id}/execute`, { method: 'POST' })
+  execute: (id) => apiFetch(`/api/recovery-actions/${id}/execute`, { method: 'POST' }),
+  policy: () => apiFetch('/api/recovery-policy'),
+  updatePolicy: (data) => apiFetch('/api/recovery-policy', { method: 'PUT', body: JSON.stringify(data) })
 };

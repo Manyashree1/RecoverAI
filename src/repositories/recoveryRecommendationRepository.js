@@ -1,6 +1,6 @@
 const Payment = require('../models/Payment');
 const RecoveryCase = require('../models/RecoveryCase');
-const RecoveryPolicy = require('../models/RecoveryPolicy');
+const { RecoveryPolicy } = require('../models/RecoveryPolicy');
 const RecoveryAction = require('../models/RecoveryAction');
 const AuditEvent = require('../models/AuditEvent');
 

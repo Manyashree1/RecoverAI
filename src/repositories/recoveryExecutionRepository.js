@@ -2,7 +2,7 @@ const RecoveryAction = require('../models/RecoveryAction');
 const RecoveryCase = require('../models/RecoveryCase');
 const Payment = require('../models/Payment');
 const Customer = require('../models/Customer');
-const RecoveryPolicy = require('../models/RecoveryPolicy');
+const { RecoveryPolicy } = require('../models/RecoveryPolicy');
 const AuditEvent = require('../models/AuditEvent');
 
 class RecoveryExecutionRepository {

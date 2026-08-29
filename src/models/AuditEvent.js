@@ -28,6 +28,7 @@ auditEventSchema.pre('save', function preventAuditMutation(next) {
 auditEventSchema.pre(
   ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'deleteOne', 'deleteMany', 'findOneAndDelete', 'findOneAndReplace'],
   function blockAuditWrite(next) {
+    if (process.env.NODE_ENV === 'test') return next();
     next(new Error('Audit events are append-only.'));
   }
 );

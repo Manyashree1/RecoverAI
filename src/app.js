@@ -8,6 +8,7 @@ const { createRecoveryCaseRouter } = require('./routes/recoveryCaseRoutes');
 const { createAuditEventRouter } = require('./routes/auditEventRoutes');
 const { createRecoveryActionRouter } = require('./routes/recoveryActionRoutes');
 const { createAnalyticsRouter } = require('./routes/analyticsRoutes');
+const { createPolicyRouter } = require('./routes/policyRoutes');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 // Deployment-only CORS gate. No origins configured -> behaves exactly as
@@ -33,7 +34,8 @@ function createApp({
   recoveryCaseRouter,
   auditEventRouter,
   recoveryActionRouter,
-  analyticsRouter
+  analyticsRouter,
+  policyRouter
 } = {}) {
   const app = express();
 
@@ -49,6 +51,7 @@ function createApp({
   app.use('/api/audit-events', auditEventRouter || createAuditEventRouter());
   app.use('/api/recovery-actions', recoveryActionRouter || createRecoveryActionRouter());
   app.use('/api/analytics', analyticsRouter || createAnalyticsRouter());
+  app.use('/api/recovery-policy', policyRouter || createPolicyRouter());
   app.use(notFoundHandler);
   app.use(errorHandler);
 

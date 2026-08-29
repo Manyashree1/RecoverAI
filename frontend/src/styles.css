@@ -137,3 +137,39 @@
 
 .policy-cell{display:flex;flex-direction:column;gap:4px}
 .policy-cell .status-badge{align-self:flex-start}
+
+/* --- Phase 2: Policy management UI --- */
+.policy-actions{display:grid;gap:10px}
+.policy-action{display:flex;align-items:flex-start;gap:12px;padding:14px;background:#101a22;border:1px solid var(--line);border-radius:7px;cursor:pointer;transition:.2s}
+.policy-action:hover{border-color:#34525a;background:#13202a}
+.policy-action.is-allowed{border-color:#2f5f52;background:#0f1d1a}
+.policy-action input[type="checkbox"]{width:18px;height:18px;margin-top:2px;accent-color:var(--cyan);flex:none}
+.policy-action div{display:grid;gap:3px}
+.policy-action strong{color:var(--text);font-size:13px;font-weight:600}
+.policy-action span{color:var(--muted);font-size:11px;line-height:1.5}
+
+.policy-fields{display:grid;gap:14px}
+.policy-field{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px;background:#101a22;border:1px solid var(--line);border-radius:7px}
+.policy-field span{display:grid;gap:3px;min-width:0;flex:1}
+.policy-field strong{color:var(--text);font-size:13px;font-weight:600}
+.policy-field small{color:var(--muted);font-size:11px;line-height:1.5}
+.policy-field input{width:90px;padding:9px 11px;border:1px solid var(--line);border-radius:6px;background:#0d161c;color:var(--text);font-size:13px;font-weight:600;text-align:right}
+.policy-field input:focus{border-color:var(--cyan);outline:none}
+@media(max-width:540px){.policy-field{flex-direction:column;align-items:stretch}.policy-field input{width:100%}}
+
+.policy-footer{display:flex;align-items:center;gap:14px;margin-top:18px}
+.policy-footer .primary-button{display:flex;align-items:center;gap:8px}
+.unsaved-indicator{color:var(--amber);font-size:12px;font-weight:600}
+.form-success{padding:12px 14px;margin-top:14px;border:1px solid #2f5f52;border-radius:7px;background:#0f1d1a;color:var(--green);font-size:13px;font-weight:600}
+
+.policy-status{display:grid;gap:10px}
+.policy-status-row{display:flex;align-items:center;gap:10px;color:var(--soft);font-size:13px;font-weight:600}
+.policy-status-row.muted{color:var(--muted);font-size:12px;font-weight:400}
+.status-dot{width:10px;height:10px;border-radius:50%;flex:none}
+.status-dot.active{background:var(--green);box-shadow:0 0 0 3px rgba(121,213,165,.18)}
+
+.policy-effects{display:grid;gap:8px}
+.effect-allowed{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid #2f5f52;border-radius:6px;background:#0f1d1a;color:var(--green);font-size:12px;font-weight:600}
+.effect-allowed svg{flex:none}
+.effect-blocked{display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid #4a3030;border-radius:6px;background:#1a1010;color:var(--red);font-size:12px;font-weight:600}
+.effect-blocked svg{flex:none}

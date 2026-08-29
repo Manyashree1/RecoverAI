@@ -37,6 +37,7 @@ test.before(async () => {
   await mongoose.connection.db.collection('payments').deleteMany({});
   await mongoose.connection.db.collection('recoverycases').deleteMany({});
   await mongoose.connection.db.collection('recoveryactions').deleteMany({});
+  await mongoose.connection.db.collection('recoverypolicies').deleteMany({});
   await mongoose.connection.db.collection('auditevents').deleteMany({});
 
   const authService = new AuthService();

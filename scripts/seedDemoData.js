@@ -1,4 +1,4 @@
-/* Development-only deterministic demo data. It deliberately creates no RECOVERED case or recovery revenue. */
+/* Development-only deterministic demo data. */
 const mongoose = require('mongoose');
 const { connectDatabase } = require('../src/config/database');
 const Merchant = require('../src/models/Merchant');
@@ -10,10 +10,9 @@ const RecoveryPolicy = require('../src/models/RecoveryPolicy');
 const RecoveryAction = require('../src/models/RecoveryAction');
 const AuditEvent = require('../src/models/AuditEvent');
 const { AuthService } = require('../src/services/authService');
-const { evaluateRecoveryAction } = require('../src/services/policyEngine');
 
 const DEMO_POLICY_CONFIG = Object.freeze({
-  allowedActions: ['CUSTOMER_REMINDER'],
+  allowedActions: ['CUSTOMER_REMINDER', 'RETRY_PAYMENT', 'PAYMENT_METHOD_UPDATE'],
   minimumRecoveryConfidence: 0.6,
   maxAutomaticRetries: 2,
   maxTransactionAmount: 1000000,
@@ -21,10 +20,14 @@ const DEMO_POLICY_CONFIG = Object.freeze({
 });
 
 const DEMO_SCENARIOS = Object.freeze([
-  { id: 'temporary', amount: 499900, code: 'insufficient_funds', action: 'CUSTOMER_REMINDER', status: 'EXECUTED', fallbackUsed: true },
-  { id: 'blocked', amount: 150000, code: 'card_declined', action: 'PAYMENT_METHOD_UPDATE', status: 'POLICY_BLOCKED' },
-  { id: 'limit', amount: 75000, code: 'insufficient_funds', action: 'RETRY_PAYMENT', status: 'BLOCKED' },
-  { id: 'failed', amount: 250000, code: 'network_error', action: 'CUSTOMER_REMINDER', status: 'FAILED' }
+  { id: 'temporary', amount: 499900, code: 'insufficient_funds', action: 'CUSTOMER_REMINDER', status: 'EXECUTED', fallbackUsed: true, caseStatus: 'ACTION_PENDING', recovered: false },
+  { id: 'blocked', amount: 150000, code: 'card_declined', action: 'PAYMENT_METHOD_UPDATE', status: 'POLICY_BLOCKED', caseStatus: 'POLICY_BLOCKED', recovered: false },
+  { id: 'limit', amount: 75000, code: 'insufficient_funds', action: 'RETRY_PAYMENT', status: 'BLOCKED', caseStatus: 'DETECTED', recovered: false },
+  { id: 'failed', amount: 250000, code: 'network_error', action: 'CUSTOMER_REMINDER', status: 'FAILED', caseStatus: 'DETECTED', recovered: false },
+  { id: 'recovered', amount: 350000, code: 'insufficient_funds', action: 'CUSTOMER_REMINDER', status: 'EXECUTED', caseStatus: 'RECOVERED', recovered: true, recoveredAmount: 350000 },
+  { id: 'escalated', amount: 120000, code: 'fraud_suspected', action: 'ESCALATE_TO_HUMAN', status: 'EXECUTED', caseStatus: 'ACTION_PENDING', recovered: false },
+  { id: 'payment_method', amount: 220000, code: 'card_expired', action: 'PAYMENT_METHOD_UPDATE', status: 'EXECUTED', caseStatus: 'ACTION_PENDING', recovered: false },
+  { id: 'contact_limit', amount: 90000, code: 'insufficient_funds', action: 'CUSTOMER_REMINDER', status: 'BLOCKED', caseStatus: 'DETECTED', recovered: false }
 ]);
 
 async function main() {
@@ -46,25 +49,112 @@ async function main() {
     const hash = await new AuthService().hashPassword(password);
     await MerchantUser.findOneAndUpdate({ email: 'demo@recoverai.test' }, { merchant: merchant._id, email: 'demo@recoverai.test', passwordHash: hash, role: 'MERCHANT_ADMIN', status: 'ACTIVE' }, { upsert: true, new: true });
     const customer = await Customer.findOneAndUpdate({ merchant: merchant._id, externalCustomerId: 'demo_customer' }, { merchant: merchant._id, externalCustomerId: 'demo_customer', email: 'customer@demo.test', phone: '+919900000001' }, { upsert: true, new: true });
+
     for (const row of DEMO_SCENARIOS) {
-      const payment = await Payment.findOneAndUpdate({ razorpayPaymentId: `demo_${row.id}` }, { merchant: merchant._id, customer: customer._id, razorpayPaymentId: `demo_${row.id}`, amount: row.amount, currency: 'INR', status: 'FAILED', failure: { code: row.code, description: `Development demo ${row.code}` }, attemptCount: 1 }, { upsert: true, new: true });
-      const recoveryCase = await RecoveryCase.findOneAndUpdate({ payment: payment._id }, { merchant: merchant._id, payment: payment._id, status: row.status === 'EXECUTED' ? 'ACTION_PENDING' : 'DETECTED', retryCount: row.id === 'limit' ? 2 : 0, customerContactAttempts: row.status === 'EXECUTED' ? 1 : 0, recoveredAmount: 0 }, { upsert: true, new: true });
+      const payment = await Payment.findOneAndUpdate(
+        { razorpayPaymentId: `demo_${row.id}` },
+        { merchant: merchant._id, customer: customer._id, razorpayPaymentId: `demo_${row.id}`, amount: row.amount, currency: 'INR', status: 'FAILED', failure: { code: row.code, description: `Development demo ${row.code}` }, attemptCount: 1 },
+        { upsert: true, new: true }
+      );
+      const recoveryCase = await RecoveryCase.findOneAndUpdate(
+        { payment: payment._id },
+        { merchant: merchant._id, payment: payment._id, status: row.caseStatus, retryCount: row.id === 'limit' ? 2 : 0, customerContactAttempts: row.id === 'contact_limit' ? 2 : 0, recoveredAmount: row.recovered ? row.recoveredAmount : 0, ...(row.recovered ? { resolvedAt: new Date() } : {}) },
+        { upsert: true, new: true }
+      );
+
       await resetStaleDemoRecommendation({ merchant: merchant._id, payment, recoveryCase, policy: DEMO_POLICY_CONFIG, scenarioId: row.id });
+
       const key = `demo:${row.id}`;
-      const action = await RecoveryAction.findOneAndUpdate({ idempotencyKey: key }, { merchant: merchant._id, payment: payment._id, recoveryCase: recoveryCase._id, type: row.action, status: row.status, recommendation: { source: row.fallbackUsed || row.id === 'failed' ? 'SYSTEM' : 'AI_AGENT', confidence: 0.8, rationale: 'Development-only deterministic demo scenario.' }, policyDecision: { decision: row.status === 'POLICY_BLOCKED' || row.status === 'BLOCKED' ? 'BLOCKED' : 'ALLOWED', reason: 'Development demo.' }, idempotencyKey: key, execution: row.status === 'EXECUTED' ? { provider: 'RAZORPAY_TEST', providerReference: 'demo_link_not_paid', result: 'PAYMENT_LINK_CREATED' } : row.status === 'FAILED' ? { provider: 'RAZORPAY_TEST', result: 'PROVIDER_FAILURE', error: 'Development demo failure.' } : {} }, { upsert: true, new: true });
+      const execution = row.recovered
+        ? { provider: 'RAZORPAY_TEST', providerReference: `demo_link_${row.id}`, result: 'PAYMENT_CONFIRMED', providerPaymentId: `demo_provider_payment_${row.id}`, confirmedAt: new Date() }
+        : row.status === 'EXECUTED'
+          ? { provider: 'RAZORPAY_TEST', providerReference: `demo_link_${row.id}`, result: 'PAYMENT_LINK_CREATED' }
+          : row.status === 'FAILED'
+            ? { provider: 'RAZORPAY_TEST', result: 'PROVIDER_FAILURE', error: 'Development demo failure.' }
+            : {};
+
+      const action = await RecoveryAction.findOneAndUpdate(
+        { idempotencyKey: key },
+        {
+          merchant: merchant._id,
+          payment: payment._id,
+          recoveryCase: recoveryCase._id,
+          type: row.action,
+          status: row.status,
+          recommendation: { source: row.fallbackUsed || row.id === 'failed' || row.id === 'contact_limit' ? 'SYSTEM' : 'AI_AGENT', confidence: 0.8, rationale: 'Development-only deterministic demo scenario.' },
+          policyDecision: {
+            decision: ['POLICY_BLOCKED', 'BLOCKED'].includes(row.status) ? 'BLOCKED' : 'ALLOWED',
+            reason: row.id === 'limit' ? 'Maximum automatic retry count reached.' : row.id === 'contact_limit' ? 'Maximum customer contact attempts reached.' : 'Development demo.',
+            evaluatedAt: new Date()
+          },
+          idempotencyKey: key,
+          execution
+        },
+        { upsert: true, new: true }
+      );
+
       const eventType = row.status === 'FAILED' ? 'ACTION_EXECUTION_FAILED' : row.status === 'EXECUTED' ? 'ACTION_EXECUTION_COMPLETED' : 'POLICY_EVALUATED';
       const eventId = demoProviderEventId(row.id, eventType);
       const existingEvent = await findExistingDemoEvent({ merchant: merchant._id, action, type: eventType, providerEventId: eventId });
-      if (!existingEvent) await AuditEvent.create({ merchant: merchant._id, payment: payment._id, recoveryCase: recoveryCase._id, recoveryAction: action._id, providerEventId: eventId, type: eventType, actor: 'SYSTEM', reason: 'Development demo audit event.' });
+      if (!existingEvent) {
+        await AuditEvent.create({
+          merchant: merchant._id,
+          payment: payment._id,
+          recoveryCase: recoveryCase._id,
+          recoveryAction: action._id,
+          providerEventId: eventId,
+          type: eventType,
+          actor: 'SYSTEM',
+          reason: 'Development demo audit event.'
+        });
+      }
+
       if (row.fallbackUsed) {
         const fallbackEventId = demoProviderEventId(row.id, 'AI_FALLBACK_USED');
         const fallbackEvent = await findExistingDemoEvent({ merchant: merchant._id, action, type: 'AI_FALLBACK_USED', providerEventId: fallbackEventId });
-        if (!fallbackEvent) await AuditEvent.create({ merchant: merchant._id, payment: payment._id, recoveryCase: recoveryCase._id, recoveryAction: action._id, providerEventId: fallbackEventId, type: 'AI_FALLBACK_USED', actor: 'SYSTEM', reason: 'Development demo fallback scenario.' });
+        if (!fallbackEvent) {
+          await AuditEvent.create({
+            merchant: merchant._id,
+            payment: payment._id,
+            recoveryCase: recoveryCase._id,
+            recoveryAction: action._id,
+            providerEventId: fallbackEventId,
+            type: 'AI_FALLBACK_USED',
+            actor: 'SYSTEM',
+            reason: 'Development demo fallback scenario.'
+          });
+        }
+      }
+
+      if (row.recovered) {
+        const recoveryEventId = demoProviderEventId(row.id, 'RECOVERY_COMPLETED');
+        const existingRecoveryEvent = await findExistingDemoEvent({ merchant: merchant._id, action, type: 'RECOVERY_COMPLETED', providerEventId: recoveryEventId });
+        if (!existingRecoveryEvent) {
+          await AuditEvent.create({
+            merchant: merchant._id,
+            payment: payment._id,
+            recoveryCase: recoveryCase._id,
+            recoveryAction: action._id,
+            providerEventId: recoveryEventId,
+            type: 'RECOVERY_COMPLETED',
+            actor: 'RAZORPAY',
+            action: row.action,
+            reason: 'Razorpay confirmed payment for the RecoverAI Payment Link.',
+            result: 'PAYMENT_CONFIRMED',
+            metadata: { provider: 'RAZORPAY', providerPaymentId: `demo_provider_payment_${row.id}`, providerLinkId: `demo_link_${row.id}`, amount: row.recoveredAmount, currency: 'INR' }
+          });
+        }
       }
     }
-    console.log('Development demo data ready. No recovered revenue was seeded.');
-  } finally { await mongoose.disconnect(); }
+
+    const recoveredCases = DEMO_SCENARIOS.filter((s) => s.recovered);
+    const recoveredRevenue = recoveredCases.reduce((sum, s) => sum + (s.recoveredAmount || 0), 0);
+    console.log(`Development demo data ready. ${recoveredCases.length} recovered case(s), ₹${recoveredRevenue} recovered revenue.`);
+  } finally {
+    await mongoose.disconnect();
+  }
 }
+
 if (require.main === module) {
   main().catch((error) => { console.error('Demo seed failed:', error.message); process.exitCode = 1; });
 }

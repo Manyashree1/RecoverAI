@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
+const { env } = require('../config/env');
 
 class MongoTransactionRunner {
   constructor({ fallbackToDirect = true } = {}) {
-    this._fallbackToDirect = fallbackToDirect;
+    this._fallbackToDirect = fallbackToDirect && env.nodeEnv !== 'production';
     this._transactionsSupported = null;
+    this._warned = false;
   }
 
   async _areTransactionsSupported() {
@@ -23,9 +25,19 @@ class MongoTransactionRunner {
   }
 
   async run(work) {
-    const useDirect = !this._fallbackToDirect || !(await this._areTransactionsSupported());
+    const supported = await this._areTransactionsSupported();
+    const useDirect = !this._fallbackToDirect || !supported;
 
     if (useDirect) {
+      if (env.nodeEnv === 'production') {
+        const error = new Error('Production MongoDB does not support transactions. Deploy a replica set or enable MongoDB Atlas transactions.');
+        error.statusCode = 500;
+        throw error;
+      }
+      if (!this._warned) {
+        this._warned = true;
+        console.warn('[MongoTransactionRunner] Transactions not supported; falling back to direct writes. This is unsafe for production recovery flows.');
+      }
       return work(null);
     }
 

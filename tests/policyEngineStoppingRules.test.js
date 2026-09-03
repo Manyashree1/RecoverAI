@@ -91,3 +91,23 @@ test('evaluateRecoveryAction provides stopping rule and evidence in result', () 
   assert.ok(result.stoppingRule);
   assert.ok(result.stoppingEvidence);
 });
+
+test('evaluateRecoveryAction sets escalate=true only for ESCALATE stopping decision', () => {
+  const escalateResult = evaluateRecoveryAction({
+    policy: buildPolicy({ maxAutomaticRetries: 0 }),
+    payment: buildPayment(),
+    recoveryCase: buildRecoveryCase({ retryCount: 1, status: RECOVERY_CASE_STATUS.DETECTED }),
+    recommendation: { type: RECOVERY_ACTION_TYPE.RETRY_PAYMENT, confidence: 0.95 },
+    existingActions: []
+  });
+  assert.equal(escalateResult.escalate, true);
+
+  const blockResult = evaluateRecoveryAction({
+    policy: buildPolicy({ allowedActions: ['CUSTOMER_REMINDER'] }),
+    payment: buildPayment(),
+    recoveryCase: buildRecoveryCase({ retryCount: 0, status: RECOVERY_CASE_STATUS.DETECTED }),
+    recommendation: { type: RECOVERY_ACTION_TYPE.RETRY_PAYMENT, confidence: 0.95 },
+    existingActions: []
+  });
+  assert.equal(blockResult.escalate, false);
+});

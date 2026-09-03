@@ -6,8 +6,8 @@
 - **Eligible recovery cases:** those same open cases.
 - **Recovery attempts:** actions in `EXECUTING`, `EXECUTED`, or `FAILED`.
 - **Successful recoveries / recovered revenue:** only `RECOVERED` cases with a positive `recoveredAmount`, an executed action with a provider reference, and a Razorpay-authored `RECOVERY_COMPLETED` audit event.
-- **Recovery rate:** successful recoveries / eligible cases; zero when there are none.
-- **Recovery value rate:** recovered revenue / revenue at risk; zero when at risk is zero.
+- **Recovery rate:** provider-confirmed recovered opportunities / total recovery opportunities (cases with a failed payment). This denominator never shrinks after recovery, so the rate stays between 0% and 100%.
+- **Recovery value rate:** recovered revenue / total recovery opportunity value. Uses the same historical opportunity denominator, not current revenue at risk.
 - **Blocked actions:** `POLICY_BLOCKED` or `BLOCKED` actions.
 - **Failed executions:** `FAILED` actions.
 - **AI fallbacks:** `AI_FALLBACK_USED` audit events.

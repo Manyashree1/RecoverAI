@@ -7,7 +7,7 @@ function parseRazorpayPaymentWebhook(payload) {
   }
 
   const eventType = payload.event;
-  if (eventType === 'payment_link.paid') return parsePaymentLinkPaidWebhook(payload);
+  if (eventType === 'payment_link.paid' || eventType === 'payment_link.partially_paid') return parsePaymentLinkPaidWebhook(payload);
   const targetStatus = getPaymentStatusForEvent(eventType);
   if (!targetStatus) return { supported: false, eventType };
 
@@ -60,11 +60,13 @@ function parsePaymentLinkPaidWebhook(payload) {
   return {
     supported: true,
     recoveryConfirmation: true,
+    partialPayment: payload.event === 'payment_link.partially_paid',
     providerAccountId: payload.account_id,
     eventType: payload.event,
     paymentLink: {
       id: paymentLink.id,
       referenceId: paymentLink.reference_id,
+      amount: paymentLink.amount,
       amountPaid: paymentLink.amount_paid,
       currency: payment.currency || paymentLink.currency
     },

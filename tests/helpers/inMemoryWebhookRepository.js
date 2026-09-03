@@ -128,6 +128,13 @@ class InMemoryWebhookRepository {
     return recoveryCase;
   }
 
+  async listRecentEvents(merchantId) {
+    return this.state.webhookEvents
+      .filter((event) => String(event.merchant) === String(merchantId))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+      .slice(0, 20);
+  }
+
   async createAuditEvent(data) {
     if (this.failAuditEvent) throw new Error('Simulated database failure while writing audit event.');
     if (this.state.auditEvents.some((event) => event.providerEventId === data.providerEventId && event.type === data.type)) {

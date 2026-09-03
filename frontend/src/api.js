@@ -54,5 +54,8 @@ export const api = {
   newRecoveryAttempt: (id) => apiFetch(`/api/recovery-cases/${id}/recovery-attempts`, { method: 'POST' }),
   execute: (id) => apiFetch(`/api/recovery-actions/${id}/execute`, { method: 'POST' }),
   policy: () => apiFetch('/api/recovery-policy'),
-  updatePolicy: (data) => apiFetch('/api/recovery-policy', { method: 'PUT', body: JSON.stringify(data) })
+  updatePolicy: (data) => apiFetch('/api/recovery-policy', { method: 'PUT', body: JSON.stringify(data) }),
+  batchStatus: () => apiFetch('/api/recovery-batch/status'),
+  runBatch: (limit) => apiFetch('/api/recovery-batch/run', { method: 'POST', body: JSON.stringify({ limit }) }),
+  webhookInfo: () => apiFetch('/api/health/webhook-info')
 };

@@ -7,6 +7,7 @@ function createRecoveryActionRouter({ controller = createRecoveryActionControlle
   router.use(requireAuth);
   router.get('/', controller.list);
   router.post('/:id/execute', controller.execute);
+  router.post('/:id/reconcile-paid-link', controller.reconcilePaidLink);
   return router;
 }
 

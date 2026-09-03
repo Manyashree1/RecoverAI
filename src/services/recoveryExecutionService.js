@@ -15,6 +15,59 @@ class RecoveryExecutionService {
     this.razorpayClient = razorpayClient;
   }
 
+  async reconcileAlreadyPaidLink({ merchantId, paymentLinkId }) {
+    const providerResult = await this.razorpayClient.fetchPaymentLink({ paymentLinkId });
+    if (!providerResult || providerResult.status !== 'paid') {
+      return { outcome: 'PENDING', paymentLink: providerResult || { id: paymentLinkId, status: 'created' } };
+    }
+
+    const context = await this.repository.findActionContextByPaymentLink({ merchantId, referenceId: providerResult.referenceId, paymentLinkId: providerResult.id });
+    if (!context || !context.action || !context.recoveryCase || !context.payment) {
+      return { outcome: 'IGNORED', paymentLink: providerResult };
+    }
+
+    const amount = providerResult.amountPaid || providerResult.amount || context.payment.amount;
+    if (typeof amount !== 'number' || amount <= 0 || amount > context.payment.amount * 10) {
+      return { outcome: 'REJECTED', reason: 'Payment link amount is invalid for this recovery action.', paymentLink: providerResult };
+    }
+    if (!providerResult.providerPaymentId) {
+      return { outcome: 'REJECTED', reason: 'Razorpay confirmed the link as paid but did not return a provider payment ID.', paymentLink: providerResult };
+    }
+
+    const confirmation = await this.transactionRunner.run((session) => this.#confirmAndAuditAlreadyPaidLink({
+      merchantId,
+      action: context.action,
+      payment: context.payment,
+      recoveryCase: context.recoveryCase,
+      providerPaymentId: providerResult.providerPaymentId,
+      amount,
+      currency: providerResult.currency || context.payment.currency,
+      providerLinkId: providerResult.id
+    }, session));
+
+    if (!confirmation.confirmed) {
+      return { outcome: 'IGNORED', paymentLink: providerResult };
+    }
+
+    return { outcome: 'RECOVERED', action: publicAction(confirmation.action), paymentLink: { id: providerResult.id, providerPaymentId: providerResult.providerPaymentId, status: providerResult.status, amountPaid: amount, currency: confirmation.currency } };
+  }
+
+  async #confirmAndAuditAlreadyPaidLink({ merchantId, action, payment, recoveryCase, providerPaymentId, providerLinkId, amount, currency }, session) {
+    const confirmation = await this.repository.confirmRecovery({ merchantId, actionId: action._id, providerPaymentId, amount, currency }, session);
+    if (!confirmation.confirmed) return confirmation;
+    await this.repository.createAuditEvent(audit({
+      merchantId,
+      action: confirmation.action,
+      payment,
+      recoveryCase: confirmation.recoveryCase,
+      type: AUDIT_EVENT_TYPE.RECOVERY_COMPLETED,
+      reason: 'Razorpay confirmed payment for an already-paid RecoverAI Payment Link.',
+      result: 'PAYMENT_CONFIRMED',
+      metadata: { provider: 'RAZORPAY', providerPaymentId, providerLinkId, amount, currency }
+    }), session);
+    return confirmation;
+  }
+
   async execute({ merchantId, actionId }) {
     const reserved = await this.transactionRunner.run((session) => this.#reserve(merchantId, actionId, session));
     if (reserved.outcome !== 'RESERVED') return reserved;

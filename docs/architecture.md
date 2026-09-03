@@ -74,4 +74,15 @@ The AI provider (or its deterministic fallback) only ever produces a `{action, c
 
 The `GET /api/analytics/overview` response also includes counts by existing recovery action, failure category, and recovery status so a future dashboard can visualize performance without duplicating financial logic in the frontend.
 
-See `docs/development-log.md` for the increment-by-increment history and `README.md` for setup and API details.
+## Batch recovery
+
+`BatchRecoveryService` orchestrates bounded, merchant-scoped batch processing of recovery opportunities. It reuses the existing recommendation service, policy engine, stopping rules, and execution service — it contains no duplicate domain logic.
+
+Key properties:
+- **Bounded**: hard maximum of 50 cases per batch (configurable lower)
+- **Merchant scoped**: only processes the authenticated merchant's cases
+- **Manual trigger**: opening the batch screen does nothing; the user must explicitly run it
+- **Never fabricates recovery**: batch results clearly separate at-risk / pending / recovered
+- **Idempotent per case**: reuses existing idempotency keys from the recommendation service
+
+See `README.md` for setup and API details.

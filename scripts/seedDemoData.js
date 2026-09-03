@@ -6,28 +6,54 @@ const MerchantUser = require('../src/models/MerchantUser');
 const Customer = require('../src/models/Customer');
 const Payment = require('../src/models/Payment');
 const RecoveryCase = require('../src/models/RecoveryCase');
-const RecoveryPolicy = require('../src/models/RecoveryPolicy');
+const {RecoveryPolicy} = require('../src/models/RecoveryPolicy');
 const RecoveryAction = require('../src/models/RecoveryAction');
 const AuditEvent = require('../src/models/AuditEvent');
 const { AuthService } = require('../src/services/authService');
+const { analyzeRecoveryCase } = require('../src/services/recoveryIntelligenceService');
+const { evaluateRecoveryAction } = require('../src/services/policyEngine');
+const { hasRecoveryEvidence } = require('../src/services/analyticsService');
 
 const DEMO_POLICY_CONFIG = Object.freeze({
   allowedActions: ['CUSTOMER_REMINDER', 'RETRY_PAYMENT', 'PAYMENT_METHOD_UPDATE'],
   minimumRecoveryConfidence: 0.6,
   maxAutomaticRetries: 2,
   maxTransactionAmount: 1000000,
-  maxCustomerContactAttempts: 1
+  maxCustomerContactAttempts: 1,
+  cooldownMinutes: 0
 });
 
 const DEMO_SCENARIOS = Object.freeze([
-  { id: 'temporary', amount: 499900, code: 'insufficient_funds', action: 'CUSTOMER_REMINDER', status: 'EXECUTED', fallbackUsed: true, caseStatus: 'ACTION_PENDING', recovered: false },
-  { id: 'blocked', amount: 150000, code: 'card_declined', action: 'PAYMENT_METHOD_UPDATE', status: 'POLICY_BLOCKED', caseStatus: 'POLICY_BLOCKED', recovered: false },
-  { id: 'limit', amount: 75000, code: 'insufficient_funds', action: 'RETRY_PAYMENT', status: 'BLOCKED', caseStatus: 'DETECTED', recovered: false },
-  { id: 'failed', amount: 250000, code: 'network_error', action: 'CUSTOMER_REMINDER', status: 'FAILED', caseStatus: 'DETECTED', recovered: false },
-  { id: 'recovered', amount: 350000, code: 'insufficient_funds', action: 'CUSTOMER_REMINDER', status: 'EXECUTED', caseStatus: 'RECOVERED', recovered: true, recoveredAmount: 350000 },
-  { id: 'escalated', amount: 120000, code: 'fraud_suspected', action: 'ESCALATE_TO_HUMAN', status: 'EXECUTED', caseStatus: 'ACTION_PENDING', recovered: false },
-  { id: 'payment_method', amount: 220000, code: 'card_expired', action: 'PAYMENT_METHOD_UPDATE', status: 'EXECUTED', caseStatus: 'ACTION_PENDING', recovered: false },
-  { id: 'contact_limit', amount: 90000, code: 'insufficient_funds', action: 'CUSTOMER_REMINDER', status: 'BLOCKED', caseStatus: 'DETECTED', recovered: false }
+  { id: 'temporary_01', amount: 499900, code: 'insufficient_funds', retryCount: 2, contactCount: 0 },
+  { id: 'temporary_02', amount: 120000, code: 'insufficient_funds', retryCount: 2, contactCount: 0 },
+  { id: 'temporary_03', amount: 275000, code: 'insufficient_funds', retryCount: 0, contactCount: 0 },
+  { id: 'temporary_04', amount: 850000, code: 'insufficient_funds', retryCount: 1, contactCount: 1 },
+  { id: 'temporary_05', amount: 4999, code: 'insufficient_funds', retryCount: 2, contactCount: 0 },
+
+  { id: 'payment_method_01', amount: 850000, code: 'expired_card', retryCount: 0, contactCount: 0 },
+  { id: 'payment_method_02', amount: 220000, code: 'expired_card', retryCount: 0, contactCount: 0 },
+  { id: 'payment_method_03', amount: 640000, code: 'card_declined', retryCount: 0, contactCount: 0 },
+
+  { id: 'fraud_01', amount: 350000, code: 'fraud_suspected', retryCount: 0, contactCount: 0 },
+  { id: 'fraud_02', amount: 1200000, code: 'fraud_suspected', retryCount: 0, contactCount: 0 },
+
+  { id: 'retry_limit_01', amount: 75000, code: 'insufficient_funds', retryCount: 2, contactCount: 0 },
+  { id: 'retry_limit_02', amount: 150000, code: 'insufficient_funds', retryCount: 2, contactCount: 0 },
+
+  { id: 'contact_fatigue_01', amount: 90000, code: 'insufficient_funds', retryCount: 0, contactCount: 2 },
+  { id: 'contact_fatigue_02', amount: 180000, code: 'insufficient_funds', retryCount: 0, contactCount: 2 },
+
+  { id: 'network_error_01', amount: 250000, code: 'network_error', retryCount: 0, contactCount: 0, historicalStatus: 'FAILED' },
+  { id: 'network_error_02', amount: 450000, code: 'network_error', retryCount: 1, contactCount: 0 },
+
+  { id: 'unknown_01', amount: 60000, code: 'unknown', retryCount: 0, contactCount: 0 },
+  { id: 'unknown_02', amount: 300000, code: 'unknown', retryCount: 0, contactCount: 0 },
+
+  { id: 'cooldown_01', amount: 180000, code: 'insufficient_funds', retryCount: 0, contactCount: 0 },
+
+  { id: 'high_value_01', amount: 8500000, code: 'insufficient_funds', retryCount: 0, contactCount: 0 },
+
+  { id: 'policy_block_01', amount: 200000, code: 'card_declined', retryCount: 0, contactCount: 0 }
 ]);
 
 async function main() {
@@ -50,7 +76,38 @@ async function main() {
     await MerchantUser.findOneAndUpdate({ email: 'demo@recoverai.test' }, { merchant: merchant._id, email: 'demo@recoverai.test', passwordHash: hash, role: 'MERCHANT_ADMIN', status: 'ACTIVE' }, { upsert: true, new: true });
     const customer = await Customer.findOneAndUpdate({ merchant: merchant._id, externalCustomerId: 'demo_customer' }, { merchant: merchant._id, externalCustomerId: 'demo_customer', email: 'customer@demo.test', phone: '+919900000001' }, { upsert: true, new: true });
 
+    let processed = 0;
+    let created = 0;
+    let reconciled = 0;
+    let preservedRecoveries = 0;
+    let seedCreatedRecoveredRevenue = 0;
+    let existingRecoveredRevenuePreserved = 0;
+
     for (const row of DEMO_SCENARIOS) {
+      processed += 1;
+      const existingPayment = await Payment.findOne({ merchant: merchant._id, razorpayPaymentId: `demo_${row.id}` }).lean();
+      if (existingPayment) {
+        const existingCase = await RecoveryCase.findOne({ merchant: merchant._id, payment: existingPayment._id }).lean();
+        if (existingCase) {
+          const [existingActions, existingAuditEvents] = await Promise.all([
+            RecoveryAction.find({ merchant: merchant._id, recoveryCase: existingCase._id }).lean(),
+            AuditEvent.find({ merchant: merchant._id, recoveryCase: existingCase._id }).lean()
+          ]);
+          if (isGenuinelyRecoveredDemoCase(existingCase, existingActions, existingAuditEvents)) {
+            preservedRecoveries += 1;
+            existingRecoveredRevenuePreserved += existingCase.recoveredAmount || 0;
+            console.log(`Skipped demo_${row.id}: already genuinely recovered, preserving evidence.`);
+            continue;
+          }
+        }
+      }
+
+      if (!existingPayment) {
+        created += 1;
+      } else {
+        reconciled += 1;
+      }
+
       const payment = await Payment.findOneAndUpdate(
         { razorpayPaymentId: `demo_${row.id}` },
         { merchant: merchant._id, customer: customer._id, razorpayPaymentId: `demo_${row.id}`, amount: row.amount, currency: 'INR', status: 'FAILED', failure: { code: row.code, description: `Development demo ${row.code}` }, attemptCount: 1 },
@@ -58,42 +115,45 @@ async function main() {
       );
       const recoveryCase = await RecoveryCase.findOneAndUpdate(
         { payment: payment._id },
-        { merchant: merchant._id, payment: payment._id, status: row.caseStatus, retryCount: row.id === 'limit' ? 2 : 0, customerContactAttempts: row.id === 'contact_limit' ? 2 : 0, recoveredAmount: row.recovered ? row.recoveredAmount : 0, ...(row.recovered ? { resolvedAt: new Date() } : {}) },
+        { merchant: merchant._id, payment: payment._id, status: 'DETECTED', retryCount: row.retryCount || 0, customerContactAttempts: row.contactCount || 0, recoveredAmount: 0 },
         { upsert: true, new: true }
       );
 
-      await resetStaleDemoRecommendation({ merchant: merchant._id, payment, recoveryCase, policy: DEMO_POLICY_CONFIG, scenarioId: row.id });
+      const recommendation = analyzeRecoveryCase({ payment, recoveryCase, policy: DEMO_POLICY_CONFIG });
+      const policyResult = evaluateRecoveryAction({
+        policy: DEMO_POLICY_CONFIG,
+        payment,
+        recoveryCase,
+        recommendation: { type: recommendation.action, confidence: recommendation.confidence },
+        existingActions: []
+      });
+
+      const actionType = recommendation.action;
+      const baseStatus = policyResult.allowed ? 'POLICY_ALLOWED' : 'POLICY_BLOCKED';
+      const actionStatus = row.historicalStatus || baseStatus;
 
       const key = `demo:${row.id}`;
-      const execution = row.recovered
-        ? { provider: 'RAZORPAY_TEST', providerReference: `demo_link_${row.id}`, result: 'PAYMENT_CONFIRMED', providerPaymentId: `demo_provider_payment_${row.id}`, confirmedAt: new Date() }
-        : row.status === 'EXECUTED'
-          ? { provider: 'RAZORPAY_TEST', providerReference: `demo_link_${row.id}`, result: 'PAYMENT_LINK_CREATED' }
-          : row.status === 'FAILED'
-            ? { provider: 'RAZORPAY_TEST', result: 'PROVIDER_FAILURE', error: 'Development demo failure.' }
-            : {};
-
       const action = await RecoveryAction.findOneAndUpdate(
         { idempotencyKey: key },
         {
           merchant: merchant._id,
           payment: payment._id,
           recoveryCase: recoveryCase._id,
-          type: row.action,
-          status: row.status,
-          recommendation: { source: row.fallbackUsed || row.id === 'failed' || row.id === 'contact_limit' ? 'SYSTEM' : 'AI_AGENT', confidence: 0.8, rationale: 'Development-only deterministic demo scenario.' },
+          type: actionType,
+          status: actionStatus,
+          recommendation: { source: 'SYSTEM', confidence: recommendation.confidence, rationale: 'Development-only deterministic demo scenario.' },
           policyDecision: {
-            decision: ['POLICY_BLOCKED', 'BLOCKED'].includes(row.status) ? 'BLOCKED' : 'ALLOWED',
-            reason: row.id === 'limit' ? 'Maximum automatic retry count reached.' : row.id === 'contact_limit' ? 'Maximum customer contact attempts reached.' : 'Development demo.',
-            evaluatedAt: new Date()
+            decision: policyResult.allowed ? 'ALLOWED' : 'BLOCKED',
+            reason: policyResult.reason,
+            evaluatedAt: new Date(),
+            escalate: policyResult.escalate
           },
-          idempotencyKey: key,
-          execution
+          idempotencyKey: key
         },
         { upsert: true, new: true }
       );
 
-      const eventType = row.status === 'FAILED' ? 'ACTION_EXECUTION_FAILED' : row.status === 'EXECUTED' ? 'ACTION_EXECUTION_COMPLETED' : 'POLICY_EVALUATED';
+      const eventType = actionStatus === 'FAILED' ? 'ACTION_EXECUTION_FAILED' : actionStatus === 'POLICY_BLOCKED' ? 'POLICY_EVALUATED' : 'ACTION_RECOMMENDED';
       const eventId = demoProviderEventId(row.id, eventType);
       const existingEvent = await findExistingDemoEvent({ merchant: merchant._id, action, type: eventType, providerEventId: eventId });
       if (!existingEvent) {
@@ -105,51 +165,25 @@ async function main() {
           providerEventId: eventId,
           type: eventType,
           actor: 'SYSTEM',
-          reason: 'Development demo audit event.'
+          reason: eventType === 'ACTION_RECOMMENDED' ? recommendation.reason : policyResult.reason,
+          action: actionType,
+          policyDecision: policyResult.allowed ? 'ALLOWED' : 'BLOCKED',
+          result: eventType === 'ACTION_EXECUTION_FAILED' ? 'FAILED' : eventType === 'POLICY_EVALUATED' ? 'BLOCKED' : 'RECOMMENDED_NOT_EXECUTED',
+          metadata: { source: 'SYSTEM', provider: 'DEMO_SEED', amount: row.amount, currency: 'INR' }
         });
-      }
-
-      if (row.fallbackUsed) {
-        const fallbackEventId = demoProviderEventId(row.id, 'AI_FALLBACK_USED');
-        const fallbackEvent = await findExistingDemoEvent({ merchant: merchant._id, action, type: 'AI_FALLBACK_USED', providerEventId: fallbackEventId });
-        if (!fallbackEvent) {
-          await AuditEvent.create({
-            merchant: merchant._id,
-            payment: payment._id,
-            recoveryCase: recoveryCase._id,
-            recoveryAction: action._id,
-            providerEventId: fallbackEventId,
-            type: 'AI_FALLBACK_USED',
-            actor: 'SYSTEM',
-            reason: 'Development demo fallback scenario.'
-          });
-        }
-      }
-
-      if (row.recovered) {
-        const recoveryEventId = demoProviderEventId(row.id, 'RECOVERY_COMPLETED');
-        const existingRecoveryEvent = await findExistingDemoEvent({ merchant: merchant._id, action, type: 'RECOVERY_COMPLETED', providerEventId: recoveryEventId });
-        if (!existingRecoveryEvent) {
-          await AuditEvent.create({
-            merchant: merchant._id,
-            payment: payment._id,
-            recoveryCase: recoveryCase._id,
-            recoveryAction: action._id,
-            providerEventId: recoveryEventId,
-            type: 'RECOVERY_COMPLETED',
-            actor: 'RAZORPAY',
-            action: row.action,
-            reason: 'Razorpay confirmed payment for the RecoverAI Payment Link.',
-            result: 'PAYMENT_CONFIRMED',
-            metadata: { provider: 'RAZORPAY', providerPaymentId: `demo_provider_payment_${row.id}`, providerLinkId: `demo_link_${row.id}`, amount: row.recoveredAmount, currency: 'INR' }
-          });
-        }
       }
     }
 
-    const recoveredCases = DEMO_SCENARIOS.filter((s) => s.recovered);
-    const recoveredRevenue = recoveredCases.reduce((sum, s) => sum + (s.recoveredAmount || 0), 0);
-    console.log(`Development demo data ready. ${recoveredCases.length} recovered case(s), ₹${recoveredRevenue} recovered revenue.`);
+    console.log('\n## RecoverAI Demo Seed');
+    console.log(`Scenarios processed: ${processed}`);
+    console.log(`Created: ${created}`);
+    console.log(`Reconciled: ${reconciled}`);
+    console.log(`Preserved recoveries: ${preservedRecoveries}`);
+    console.log(`Skipped existing: 0`);
+    console.log('');
+    console.log(`Seed-created recovered revenue: ₹${seedCreatedRecoveredRevenue}`);
+    console.log(`Existing recovered revenue preserved: ₹${existingRecoveredRevenuePreserved}`);
+    console.log('');
   } finally {
     await mongoose.disconnect();
   }
@@ -159,38 +193,16 @@ if (require.main === module) {
   main().catch((error) => { console.error('Demo seed failed:', error.message); process.exitCode = 1; });
 }
 
-module.exports = { DEMO_POLICY_CONFIG, DEMO_SCENARIOS };
-
-async function resetStaleDemoRecommendation({ merchant, payment, recoveryCase, policy, scenarioId }) {
-  if (scenarioId !== 'limit') return;
-  const staleActions = await RecoveryAction.find({
-    merchant,
-    payment,
-    type: 'CUSTOMER_REMINDER',
-    status: { $in: ['POLICY_BLOCKED', 'POLICY_ALLOWED'] },
-    'recommendation.confidence': 0.6,
-    'execution.providerReference': { $exists: false }
-  }).select('_id type recommendation');
-  if (!staleActions.length) return;
-  for (const action of staleActions) {
-    const policyDecision = evaluateRecoveryAction({
-      policy,
-      payment,
-      recoveryCase,
-      recommendation: { type: action.type, confidence: action.recommendation.confidence }
-    });
-    await RecoveryAction.updateOne(
-      { _id: action._id },
-      {
-        $set: {
-          status: policyDecision.allowed ? 'POLICY_ALLOWED' : 'POLICY_BLOCKED',
-          policyDecision: { decision: policyDecision.decision, reason: policyDecision.reason, evaluatedAt: new Date() },
-          idempotencyKey: `${recoveryCase._id}:CUSTOMER_REMINDER:retry${recoveryCase.retryCount}:contact${recoveryCase.customerContactAttempts}`
-        }
-      }
-    );
-  }
+function isGenuinelyRecoveredDemoCase(recoveryCase, recoveryActions, auditEvents) {
+  const evidenceCases = new Set(
+    auditEvents
+      .filter((event) => event.type === 'RECOVERY_COMPLETED' && event.actor === 'RAZORPAY')
+      .map((event) => String(event.recoveryCase))
+  );
+  return hasRecoveryEvidence(recoveryCase, recoveryActions, evidenceCases);
 }
+
+module.exports = { DEMO_POLICY_CONFIG, DEMO_SCENARIOS, isGenuinelyRecoveredDemoCase, main };
 
 function demoProviderEventId(scenarioId, eventType) {
   return `demo:${scenarioId}:${eventType}`;

@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { WebhookIngestionService } = require('../src/services/webhookIngestionService');
 const { PAYMENT_STATUS, AUDIT_EVENT_TYPE } = require('../src/constants/enums');
-const { failedPaymentEvent, capturedPaymentEvent, paymentLinkPaidEvent } = require('./fixtures/razorpayPaymentEvents');
+const { failedPaymentEvent, capturedPaymentEvent, paymentLinkPaidEvent, paymentLinkPartiallyPaidEvent } = require('./fixtures/razorpayPaymentEvents');
 const { InMemoryWebhookRepository, InMemoryTransactionRunner, duplicateKeyError } = require('./helpers/inMemoryWebhookRepository');
 const { calculateOverview } = require('../src/services/analyticsService');
 
@@ -144,6 +144,23 @@ test('valid Payment Link confirmation recovers the correlated case with provider
   assert.equal(repository.state.recoveryCases[0].recoveredAmount, 510000);
   assert.equal(repository.state.auditEvents[0].type, AUDIT_EVENT_TYPE.RECOVERY_COMPLETED);
   assert.equal(repository.state.auditEvents[0].actor, 'RAZORPAY');
+});
+
+test('partial Payment Link payment is recorded as partial evidence and does not recover the case', async () => {
+  const { repository, service } = createService();
+  seedExecutedRecovery(repository);
+
+  const result = await service.ingestRazorpayPaymentEvent({
+    providerEventId: 'evt_recovery_partial_001',
+    payload: paymentLinkPartiallyPaidEvent()
+  });
+
+  assert.equal(result.partial, true);
+  assert.equal(result.recovered, false);
+  assert.equal(repository.state.recoveryActions[0].execution.result, 'PAYMENT_LINK_CREATED');
+  assert.equal(repository.state.recoveryCases[0].status, 'ACTION_PENDING');
+  assert.equal(repository.state.recoveryCases[0].recoveredAmount, 0);
+  assert.equal(repository.state.auditEvents[0].type, AUDIT_EVENT_TYPE.RECOVERY_PARTIAL_PAYMENT);
 });
 
 test('duplicate Payment Link confirmation is idempotent and counted once', async () => {

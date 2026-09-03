@@ -4,6 +4,7 @@ const { MongoTransactionRunner } = require('./mongoTransactionRunner');
 const { AiRecoveryAnalysisService, RECOMMENDATION_SOURCE } = require('./ai/aiRecoveryAnalysisService');
 const { evaluateRecoveryAction } = require('./policyEngine');
 const { RECOVERY_ACTION_STATUS, ACTOR_TYPE, AUDIT_EVENT_TYPE, POLICY_DECISION, OPEN_RECOVERY_CASE_STATUSES } = require('../constants/enums');
+const { getActionCapability } = require('../constants/actionCapabilities');
 
 /**
  * Orchestrates the pipeline described in docs/architecture.md:
@@ -47,7 +48,7 @@ class RecoveryRecommendationService {
             duplicate: true,
             recoveryCaseId: String(existingAction.recoveryCase),
             paymentId: String(existingAction.payment),
-            policyDecision: { decision: existingAction.policyDecision.decision, reason: existingAction.policyDecision.reason },
+            policyDecision: { decision: existingAction.policyDecision.decision, reason: existingAction.policyDecision.reason, escalate: existingAction.policyDecision.escalate },
             recoveryAction: serializeAction(existingAction)
           };
         }
@@ -110,7 +111,7 @@ class RecoveryRecommendationService {
             rationale: policyResult.reason,
             model: aiOutcome.model || aiOutcome.provider
           },
-          policyDecision: { decision: POLICY_DECISION.BLOCKED, reason: policyResult.reason, evaluatedAt: new Date() },
+          policyDecision: { decision: POLICY_DECISION.BLOCKED, reason: policyResult.reason, evaluatedAt: new Date(), escalate: true },
           idempotencyKey: `escalate:${recoveryCase._id}:${Date.now()}`
         },
         session
@@ -178,7 +179,7 @@ class RecoveryRecommendationService {
         paymentId: String(payment._id),
         recommendation,
         source: aiOutcome.source,
-        policyDecision: { decision: POLICY_DECISION.BLOCKED, reason: policyResult.reason },
+        policyDecision: { decision: POLICY_DECISION.BLOCKED, reason: policyResult.reason, escalate: true },
         stoppingRule: policyResult.stoppingRule,
         stoppingEvidence: policyResult.stoppingEvidence,
         recoveryAction: serializeAction(escalationAction)
@@ -194,7 +195,7 @@ class RecoveryRecommendationService {
         recoveryCaseId: String(recoveryCase._id),
         paymentId: String(payment._id),
         recommendation,
-        policyDecision: { decision: priorMatchingAction.policyDecision.decision, reason: priorMatchingAction.policyDecision.reason },
+        policyDecision: { decision: priorMatchingAction.policyDecision.decision, reason: priorMatchingAction.policyDecision.reason, escalate: priorMatchingAction.policyDecision.escalate },
         recoveryAction: serializeAction(priorMatchingAction)
       };
     }
@@ -211,7 +212,7 @@ class RecoveryRecommendationService {
         recoveryCaseId: String(recoveryCase._id),
         paymentId: String(payment._id),
         recommendation,
-        policyDecision: { decision: existingAction.policyDecision.decision, reason: existingAction.policyDecision.reason },
+        policyDecision: { decision: existingAction.policyDecision.decision, reason: existingAction.policyDecision.reason, escalate: existingAction.policyDecision.escalate },
         recoveryAction: serializeAction(existingAction)
       };
     }
@@ -229,7 +230,7 @@ class RecoveryRecommendationService {
           rationale: recommendation.reason,
           model: aiOutcome.model || aiOutcome.provider
         },
-        policyDecision: { decision: policyResult.decision, reason: policyResult.reason, evaluatedAt: new Date() },
+        policyDecision: { decision: policyResult.decision, reason: policyResult.reason, evaluatedAt: new Date(), escalate: policyResult.escalate },
         idempotencyKey
       },
       session
@@ -330,12 +331,14 @@ function isDuplicateKeyError(error) {
 }
 
 function serializeAction(action) {
+  const capability = getActionCapability(action.type);
   return {
     id: String(action._id),
     type: action.type,
     status: action.status,
     recommendation: action.recommendation,
-    policyDecision: action.policyDecision
+    policyDecision: action.policyDecision,
+    capability
   };
 }
 

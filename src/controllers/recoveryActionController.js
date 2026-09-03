@@ -6,6 +6,18 @@ const { RecoveryExecutionService } = require('../services/recoveryExecutionServi
 
 function createRecoveryActionController({ executionService = new RecoveryExecutionService(), repository = new ReadRepository() } = {}) {
   return {
+    async reconcilePaidLink(req, res, next) {
+      try {
+        const result = await executionService.reconcileAlreadyPaidLink({
+          merchantId: req.auth.merchantId,
+          paymentLinkId: req.body?.paymentLinkId || req.params?.id
+        });
+        const status = result.outcome === 'RECOVERED' ? 200 : result.outcome === 'PENDING' ? 202 : result.outcome === 'REJECTED' ? 422 : 200;
+        return res.status(status).json(result);
+      } catch (error) {
+        return next(error);
+      }
+    },
     async execute(req, res, next) {
       try {
         const result = await executionService.execute({ merchantId: req.auth.merchantId, actionId: req.params.id });

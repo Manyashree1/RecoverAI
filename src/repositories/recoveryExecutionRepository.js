@@ -15,6 +15,43 @@ class RecoveryExecutionRepository {
     return { action, recoveryCase, payment, customer };
   }
 
+  async findActionContextByPaymentLink({ merchantId, referenceId, paymentLinkId }, session) {
+    const actionId = referenceId?.startsWith('ra_') ? referenceId.slice(3) : '';
+    if (!actionId) return null;
+
+    const action = await RecoveryAction.findOne({
+      _id: actionId,
+      merchant: merchantId,
+      type: 'CUSTOMER_REMINDER',
+      status: 'EXECUTED',
+      'execution.provider': 'RAZORPAY_TEST',
+      'execution.providerReference': paymentLinkId
+    }).session(session);
+    if (!action) return null;
+
+    const recoveryCase = await RecoveryCase.findOne({ _id: action.recoveryCase, merchant: merchantId }).session(session);
+    const payment = await Payment.findOne({ _id: action.payment, merchant: merchantId }).session(session);
+    const customer = payment ? await Customer.findOne({ _id: payment.customer, merchant: merchantId }).session(session) : null;
+    return { action, recoveryCase, payment, customer };
+  }
+
+  async confirmRecovery({ merchantId, actionId, providerPaymentId, amount, currency }, session) {
+    const action = await RecoveryAction.findOneAndUpdate(
+      { _id: actionId, merchant: merchantId, status: 'EXECUTED', 'execution.result': 'PAYMENT_LINK_CREATED', 'execution.providerPaymentId': { $exists: false } },
+      { $set: { 'execution.providerPaymentId': providerPaymentId, 'execution.result': 'PAYMENT_CONFIRMED', 'execution.confirmedAt': new Date() } },
+      { new: true, session, runValidators: true }
+    );
+    if (!action) return { confirmed: false };
+
+    const recoveryCase = await RecoveryCase.findOneAndUpdate(
+      { _id: action.recoveryCase, merchant: merchantId, status: { $nin: ['RECOVERED', 'CLOSED'] }, recoveredAmount: 0 },
+      { $set: { status: 'RECOVERED', recoveredAmount: amount, resolvedAt: new Date() } },
+      { new: true, session, runValidators: true }
+    );
+    if (!recoveryCase) throw new Error('Recovery case could not be completed for the confirmed payment.');
+    return { confirmed: true, action, recoveryCase, currency };
+  }
+
   async findOrCreatePolicy(merchantId, session) {
     const existing = await RecoveryPolicy.findOne({ merchant: merchantId }).session(session);
     if (existing) return existing;
@@ -49,7 +86,7 @@ class RecoveryExecutionRepository {
   async blockAction({ merchantId, actionId, reason }, session) {
     return RecoveryAction.findOneAndUpdate(
       { _id: actionId, merchant: merchantId, status: 'POLICY_ALLOWED', 'execution.idempotencyKey': { $exists: false } },
-      { status: 'BLOCKED', 'policyDecision.decision': 'BLOCKED', 'policyDecision.reason': reason, 'policyDecision.evaluatedAt': new Date() },
+      { status: 'BLOCKED', 'policyDecision.decision': 'BLOCKED', 'policyDecision.reason': reason, 'policyDecision.evaluatedAt': new Date(), 'policyDecision.escalate': false },
       { new: true, session, runValidators: true }
     );
   }

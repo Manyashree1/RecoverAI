@@ -1,5 +1,5 @@
-import { AlertTriangle, ArrowUpRight, Bot, Check, ChevronRight, CircleDollarSign, Clock3, Gauge, LockKeyhole, ShieldCheck, Sparkles, Zap } from 'lucide-react';
-import { label } from './utils';
+import { AlertTriangle, ArrowUpRight, Bot, Check, ChevronRight, CircleDollarSign, Clock3, Gauge, LockKeyhole, ShieldCheck, Sparkles, X, Zap } from 'lucide-react';
+import { currency, label } from './utils';
 
 export function Logo() {
   return <div className="brand"><span className="brand-mark"><span /></span><span>Recover<span className="brand-accent">AI</span></span></div>;
@@ -37,3 +37,67 @@ export function MiniBars({ title, subtitle, data = {}, emptyText = 'No events re
 }
 
 export function EvidenceNote({ children }) { return <div className="evidence-note"><LockKeyhole size={15} /><span>{children}</span></div>; }
+
+export function EvidenceTimeline({ case: recoveryCase, actions = [], auditEvents = [] }) {
+  const events = [...auditEvents].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const primaryAction = actions.find((a) => a.type === 'CUSTOMER_REMINDER' || a.type === 'RETRY_PAYMENT' || a.type === 'PAYMENT_METHOD_UPDATE' || a.type === 'ESCALATE_TO_HUMAN');
+  const hasPaymentFailed = Boolean(recoveryCase.payment?.failure?.code) || events.some((e) => e.type === 'PAYMENT_FAILED');
+  const hasRecommendation = events.some((e) => e.type === 'AI_RECOMMENDATION_GENERATED' || e.type === 'ACTION_RECOMMENDED');
+  const hasPolicyDecision = events.some((e) => e.type === 'POLICY_EVALUATED');
+  const actionExecuted = primaryAction?.status === 'EXECUTED';
+  const hasPaymentLink = primaryAction?.paymentLink?.id || primaryAction?.execution?.providerReference;
+  const hasWebhook = events.some((e) => e.type === 'RECOVERY_COMPLETED' && e.actor === 'RAZORPAY');
+  const isRecovered = recoveryCase.status === 'RECOVERED';
+  const isEscalated = primaryAction?.type === 'ESCALATE_TO_HUMAN' || primaryAction?.policyDecision?.escalate;
+
+  const stages = [];
+
+  stages.push({ key: 'failed', label: 'Payment failed', state: hasPaymentFailed ? 'completed' : 'pending', detail: recoveryCase.payment?.failure?.code || (hasPaymentFailed ? 'Failure recorded' : undefined) });
+  if (hasRecommendation) {
+    const actionType = primaryAction?.type || 'UNKNOWN';
+    stages.push({ key: 'recommendation', label: `AI recommended ${label(actionType)}`, state: 'completed', detail: primaryAction?.recommendation?.rationale });
+  }
+  if (hasPolicyDecision) {
+    const decision = primaryAction?.policyDecision?.decision || 'UNKNOWN';
+    const reason = primaryAction?.policyDecision?.reason;
+    stages.push({ key: 'policy', label: `Policy ${label(decision)}`, state: decision === 'ALLOWED' ? 'completed' : 'blocked', detail: reason });
+  }
+  if (isEscalated && !actionExecuted) {
+    stages.push({ key: 'escalation', label: 'Escalated to human review', state: 'blocked', detail: primaryAction?.policyDecision?.reason });
+  }
+  if (actionExecuted) {
+    stages.push({ key: 'executed', label: 'Action executed', state: 'completed', detail: primaryAction?.execution?.providerReference });
+  }
+  if (hasPaymentLink && !isRecovered) {
+    stages.push({ key: 'link', label: 'Payment link created', state: 'pending', detail: primaryAction?.paymentLink?.id || primaryAction?.execution?.providerReference });
+  }
+  if (hasWebhook) {
+    stages.push({ key: 'webhook', label: 'Razorpay webhook received', state: 'completed', detail: 'Provider-confirmed payment evidence recorded' });
+  }
+  if (isRecovered) {
+    stages.push({ key: 'recovered', label: 'Recovered', state: 'completed', detail: `${currency(recoveryCase.recoveredAmount || 0, recoveryCase.payment?.currency)} confirmed` });
+  }
+
+  if (stages.length === 0) {
+    return (
+      <div className="evidence-timeline">
+        <div className="timeline-empty">No recovery evidence recorded yet.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="evidence-timeline">
+      {stages.map((stage, idx) => (
+        <div className={`timeline-stage ${stage.state}`} key={stage.key}>
+          <span className={`timeline-dot ${stage.state}`} />
+          {idx < stages.length - 1 && <span className="timeline-line" />}
+          <div className="timeline-content">
+            <strong>{stage.label}</strong>
+            {stage.detail && <span>{stage.detail}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

@@ -9,7 +9,9 @@ const { createAuditEventRouter } = require('./routes/auditEventRoutes');
 const { createRecoveryActionRouter } = require('./routes/recoveryActionRoutes');
 const { createAnalyticsRouter } = require('./routes/analyticsRoutes');
 const { createPolicyRouter } = require('./routes/policyRoutes');
+const { createBatchRecoveryRouter } = require('./routes/batchRecoveryRoutes');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
+const { createRateLimiter } = require('./middleware/rateLimiter');
 
 // Deployment-only CORS gate. No origins configured -> behaves exactly as
 // before (same-origin/proxied setups). When CORS_ORIGIN lists the deployed
@@ -20,7 +22,7 @@ function deploymentCors(req, res, next) {
   if (origin && env.corsOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') return res.status(204).end();
   }
@@ -29,21 +31,24 @@ function deploymentCors(req, res, next) {
 
 function createApp({
   razorpayWebhookController,
+  razorpayWebhookRouter,
   authRouter,
   paymentRouter,
   recoveryCaseRouter,
   auditEventRouter,
   recoveryActionRouter,
   analyticsRouter,
-  policyRouter
+  policyRouter,
+  batchRecoveryRouter
 } = {}) {
   const app = express();
 
   // Signature verification needs the raw body, so the webhook route is
   // registered before the JSON body parser applies to anything below it.
-  app.use('/api/webhooks', createRazorpayWebhookRouter({ controller: razorpayWebhookController }));
+  app.use('/api/webhooks', razorpayWebhookRouter || createRazorpayWebhookRouter({ controller: razorpayWebhookController }));
   app.use(deploymentCors);
   app.use(express.json({ limit: '100kb' }));
+  app.use(createRateLimiter());
   app.use('/api/health', healthRouter);
   app.use('/api/auth', authRouter || createAuthRouter());
   app.use('/api/payments', paymentRouter || createPaymentRouter());
@@ -52,6 +57,7 @@ function createApp({
   app.use('/api/recovery-actions', recoveryActionRouter || createRecoveryActionRouter());
   app.use('/api/analytics', analyticsRouter || createAnalyticsRouter());
   app.use('/api/recovery-policy', policyRouter || createPolicyRouter());
+  app.use('/api/recovery-batch', batchRecoveryRouter || createBatchRecoveryRouter());
   app.use(notFoundHandler);
   app.use(errorHandler);
 

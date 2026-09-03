@@ -21,7 +21,8 @@ const recoveryActionSchema = new mongoose.Schema(
     policyDecision: {
       decision: { type: String, enum: Object.values(POLICY_DECISION), default: POLICY_DECISION.NOT_EVALUATED },
       reason: { type: String, trim: true },
-      evaluatedAt: { type: Date }
+      evaluatedAt: { type: Date },
+      escalate: { type: Boolean, default: false }
     },
     idempotencyKey: { type: String, required: true, trim: true, unique: true },
     execution: {

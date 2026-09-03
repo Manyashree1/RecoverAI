@@ -2,6 +2,7 @@ const { classifyFailure, FAILURE_CATEGORY } = require('./recoveryIntelligenceSer
 const { RECOVERY_CASE_STATUS, RECOVERY_ACTION_TYPE, OPEN_RECOVERY_CASE_STATUSES } = require('../constants/enums');
 
 const SCORE_BOUNDS = Object.freeze({ min: 0, max: 100 });
+const RAW_SCORE_MAX = 89;
 
 const FAILURE_SCORE = Object.freeze({
   [FAILURE_CATEGORY.TEMPORARY]: 28,
@@ -101,7 +102,7 @@ function computeRecoveryScore(input) {
   const evidenceComponent = computeEvidenceQualityScore(recoveryCase, payment);
 
   const rawScore = failureComponent.score + retryComponent.score + contactComponent.score + policyComponent.score + evidenceComponent.score;
-  const score = clamp(rawScore, SCORE_BOUNDS.min, SCORE_BOUNDS.max);
+  const score = clamp(Math.round((rawScore / RAW_SCORE_MAX) * SCORE_BOUNDS.max), SCORE_BOUNDS.min, SCORE_BOUNDS.max);
 
   const confidence = computeConfidence(failureCategory, Boolean(recoveryCase?.diagnosis?.explanation), Boolean(payment?.failure?.code), policy);
   const factors = [failureComponent.factor, retryComponent.factor, contactComponent.factor, policyComponent.factor, evidenceComponent.factor];

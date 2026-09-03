@@ -30,7 +30,7 @@ class WebhookIngestionService {
       if (isDuplicateKeyError(error)) {
         const existingEvent = await this.repository.findWebhookEvent(providerEventId);
         if (existingEvent) {
-          if (parsed.recoveryConfirmation) {
+            if (parsed.recoveryConfirmation && !parsed.partialPayment) {
             const merchant = await this.repository.findMerchantByAccountId(parsed.providerAccountId);
             const context = merchant
               ? await this.repository.findRecoveryActionByReference({ merchantId: merchant._id, referenceId: parsed.paymentLink.referenceId, paymentLinkId: parsed.paymentLink.id })
@@ -106,7 +106,7 @@ class WebhookIngestionService {
     let recoveryCase;
     let recoveryCaseCreated = false;
     if (payment.status === PAYMENT_STATUS.FAILED) {
-      recoveryCase = await this.repository.findRecoveryCaseByPayment(payment._id, session);
+      recoveryCase = await this.repository.findRecoveryCaseByPayment(payment._id, merchant._id, session);
       if (!recoveryCase) {
         recoveryCase = await this.repository.createRecoveryCase(
           { merchant: merchant._id, payment: payment._id, status: RECOVERY_CASE_STATUS.DETECTED },
@@ -115,7 +115,7 @@ class WebhookIngestionService {
         recoveryCaseCreated = true;
       }
     } else if (payment.status === PAYMENT_STATUS.CAPTURED) {
-      recoveryCase = await this.repository.findRecoveryCaseByPayment(payment._id, session);
+      recoveryCase = await this.repository.findRecoveryCaseByPayment(payment._id, merchant._id, session);
       if (recoveryCase && recoveryCase.status !== RECOVERY_CASE_STATUS.CLOSED) {
         recoveryCase = await this.repository.closeRecoveryCase(recoveryCase._id, session);
         await this.repository.createAuditEvent(
@@ -166,6 +166,25 @@ class WebhookIngestionService {
       merchant: merchant._id,
       payment: context?.payment?._id
     }, session);
+    if (parsed.partialPayment) {
+      if (context?.action && context.recoveryCase && context.payment) {
+        await this.repository.createAuditEvent({
+          merchant: merchant._id,
+          payment: context.payment._id,
+          recoveryCase: context.recoveryCase._id,
+          recoveryAction: context.action._id,
+          providerEventId,
+          type: AUDIT_EVENT_TYPE.RECOVERY_PARTIAL_PAYMENT,
+          actor: ACTOR_TYPE.RAZORPAY,
+          action: context.action.type,
+          reason: 'Razorpay reported a partial payment for the RecoverAI Payment Link. Recovery remains pending until the link is fully paid.',
+          result: 'PAYMENT_PARTIALLY_CONFIRMED',
+          metadata: { provider: 'RAZORPAY', providerPaymentId: parsed.payment.id, providerLinkId: parsed.paymentLink.id, amount: parsed.paymentLink.amountPaid, expectedAmount: parsed.paymentLink.amount, currency: parsed.paymentLink.currency }
+        }, session);
+      }
+      await this.repository.markWebhookEventProcessed(webhookEvent._id, context?.payment?._id, session);
+      return { duplicate: false, ignored: !context?.action, partial: true, recovered: false, eventType: parsed.eventType, paymentId: context?.payment ? String(context.payment._id) : undefined, recoveryCaseId: context?.recoveryCase ? String(context.recoveryCase._id) : undefined };
+    }
     if (!context?.action || !context.recoveryCase || !context.payment) {
       await this.repository.markWebhookEventProcessed(webhookEvent._id, undefined, session);
       return { duplicate: false, ignored: true, eventType: parsed.eventType };

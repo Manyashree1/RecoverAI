@@ -94,6 +94,10 @@ class RazorpayWebhookRepository {
     return { confirmed: true, action, recoveryCase, currency };
   }
 
+  async listRecentEvents(merchantId) {
+    return WebhookEvent.find({ merchant: merchantId }).sort({ createdAt: -1 }).limit(20).select('providerEventId providerEventType status payment createdAt processedAt').lean();
+  }
+
   async reconcileConfirmedRecovery({ merchantId, actionId, providerPaymentId }, session) {
     const action = await RecoveryAction.findOne({
       _id: actionId,
@@ -139,8 +143,8 @@ class RazorpayWebhookRepository {
     return createdCustomer;
   }
 
-  async findRecoveryCaseByPayment(paymentId, session) {
-    return RecoveryCase.findOne({ payment: paymentId }).session(session);
+  async findRecoveryCaseByPayment(paymentId, merchantId, session) {
+    return RecoveryCase.findOne({ payment: paymentId, merchant: merchantId }).session(session);
   }
 
   async createRecoveryCase(data, session) {

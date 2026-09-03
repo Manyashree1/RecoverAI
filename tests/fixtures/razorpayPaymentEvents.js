@@ -48,5 +48,10 @@ function paymentLinkPaidEvent({ referenceId = 'ra_action_001', paymentLinkId = '
   };
 }
 
-module.exports = { failedPaymentEvent, capturedPaymentEvent, paymentLinkPaidEvent };
+function paymentLinkPartiallyPaidEvent(overrides = {}) {
+  const event = paymentLinkPaidEvent({ amountPaid: 250000, ...overrides });
+  return { ...event, event: 'payment_link.partially_paid', payload: { ...event.payload, payment_link: { ...event.payload.payment_link, entity: { ...event.payload.payment_link.entity, status: 'partially_paid' } } } };
+}
+
+module.exports = { failedPaymentEvent, capturedPaymentEvent, paymentLinkPaidEvent, paymentLinkPartiallyPaidEvent };
 

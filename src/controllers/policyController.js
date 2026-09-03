@@ -6,7 +6,7 @@ const AuditEvent = require('../models/AuditEvent');
 const { toPublicJSON } = require('../utils/serialize');
 const { RECOVERY_ACTION_TYPE, AUDIT_EVENT_TYPE, ACTOR_TYPE } = require('../constants/enums');
 
-const WRITABLE_FIELDS = ['maxAutomaticRetries', 'maxCustomerContactAttempts', 'cooldownMinutes', 'escalationCooldownMinutes', 'allowedActions'];
+const WRITABLE_FIELDS = ['maxAutomaticRetries', 'maxCustomerContactAttempts', 'maxTransactionAmount', 'cooldownMinutes', 'escalationCooldownMinutes', 'allowedActions'];
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -43,6 +43,15 @@ function normalizePolicyUpdate(input) {
       errors.push(`maxCustomerContactAttempts must be an integer between ${POLICY_BOUNDS.maxCustomerContactAttempts.min} and ${POLICY_BOUNDS.maxCustomerContactAttempts.max}.`);
     } else {
       update.maxCustomerContactAttempts = value;
+    }
+  }
+
+  if ('maxTransactionAmount' in input) {
+    const value = input.maxTransactionAmount;
+    if (!Number.isInteger(value) || value < POLICY_BOUNDS.maxTransactionAmount.min || value > POLICY_BOUNDS.maxTransactionAmount.max) {
+      errors.push(`maxTransactionAmount must be an integer between ${POLICY_BOUNDS.maxTransactionAmount.min} and ${POLICY_BOUNDS.maxTransactionAmount.max}.`);
+    } else {
+      update.maxTransactionAmount = value;
     }
   }
 
@@ -104,6 +113,7 @@ function sanitizeForAudit(policy) {
   return {
     maxAutomaticRetries: policy.maxAutomaticRetries,
     maxCustomerContactAttempts: policy.maxCustomerContactAttempts,
+    maxTransactionAmount: policy.maxTransactionAmount,
     cooldownMinutes: policy.cooldownMinutes,
     escalationCooldownMinutes: policy.escalationCooldownMinutes,
     allowedActions: policy.allowedActions,

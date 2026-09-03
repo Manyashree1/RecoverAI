@@ -229,6 +229,8 @@ test('merchant-scoped analytics excludes another merchant data', async (t) => {
     data: {
       revenueAtRisk: 10000,
       eligibleRecoveryCases: 1,
+      recoveryOpportunities: 1,
+      recoveryOpportunityValue: 10000,
       recoveryAttempts: 0,
       successfulRecoveries: 0,
       recoveredRevenue: 0,
@@ -301,6 +303,24 @@ test('recovery recommendation generation', async (t) => {
     const body = await response.json();
 
     assert.notEqual(body.recommendation.action, 'RETRY_PAYMENT');
+  });
+
+  await t.test('automation-exhausted case escalates with escalate=true in policyDecision', async () => {
+    store.payments.push(buildPayment({ _id: 'payment_escalate', merchant: 'merchant_1', failure: { code: 'insufficient_funds' } }));
+    store.recoveryCases.push(
+      buildRecoveryCase({ _id: 'case_escalate', merchant: 'merchant_1', payment: 'payment_escalate', retryCount: 2, customerContactAttempts: 1 })
+    );
+
+    const response = await fetch(`${baseUrl}/api/recovery-cases/case_escalate/recommendations`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    assert.equal(response.status, 201);
+    const body = await response.json();
+
+    assert.equal(body.recoveryAction.type, 'ESCALATE_TO_HUMAN');
+    assert.equal(body.policyDecision.decision, 'BLOCKED');
+    assert.equal(body.policyDecision.escalate, true);
   });
 
   await t.test('a policy that disallows the recommended action blocks it, and it is never executable', async () => {

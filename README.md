@@ -12,7 +12,8 @@ RecoverAI is a merchant-facing, policy-gated recovery service for failed payment
 - A pure deterministic policy evaluator that gates every recommendation before execution.
 - A Razorpay TEST MODE adapter boundary for bounded Payment Link recovery execution.
 - Merchant-scoped analytics derived from persisted payments, recovery cases, actions, and audit evidence.
-- A Vite + React merchant console for the command center, payment operations, recovery cases, actions, and audit trail.
+- A bounded batch recovery operation that processes multiple opportunities through recommendation, policy, stopping rules, and execution in one manual operation.
+- A Vite + React merchant console for the command center, payment operations, recovery cases, actions, audit trail, and batch recovery.
 - A raw-body, HMAC-verified Razorpay payment webhook endpoint with a durable event ledger and atomic payment/case/audit updates.
 
 ## Minimal V1 architecture
@@ -26,12 +27,12 @@ Razorpay webhook -> Payment -> RecoveryCase -> AI recommendation (non-authoritat
                                                         |
                                             RecoveryAction + AuditEvent
                                                         |
-                                            Razorpay TEST adapter (future: execution)
+                                             Razorpay TEST adapter
 ```
 
 Application code — not the AI — owns policy validation, idempotency, permission to execute, provider calls, and audit logging.
 
-## Proposed API surface
+## API surface
 
 | Route | Purpose |
 | --- | --- |
@@ -46,10 +47,12 @@ Application code — not the AI — owns policy validation, idempotency, permiss
 | `GET /api/audit-events?payment=&recoveryCase=&page=&limit=` | Read the merchant's event timeline. |
 | `POST /api/recovery-actions/:id/execute` | Create a bounded Razorpay TEST payment-link reminder after policy revalidation. |
 | `GET /api/analytics/overview` | Merchant-scoped truthful recovery measurement and breakdowns. |
+| `GET /api/recovery-policy` | Read the merchant's recovery policy. |
+| `PUT /api/recovery-policy` | Update the merchant's recovery policy (optimistic concurrency). |
+| `GET /api/recovery-batch/status` | Get batch configuration (max limit). |
+| `POST /api/recovery-batch/run` | Run a bounded batch recovery operation. |
 
-Not yet implemented: `GET/PUT /api/recovery-policy` (policy management UI).
-
-All routes above except `/health` and `/webhooks/razorpay` require `Authorization: Bearer <token>` from `/api/auth/login`, and are scoped to the authenticated merchant only.
+All routes above except `/health` and `/webhooks/razorpay` require `Authorization: Bearer <token>` from `/api/auth/login`, and are scoped to the authenticated merchant only. `/webhooks/razorpay/events` also requires authentication.
 
 ## Domain schema
 
@@ -108,13 +111,66 @@ The raw payload and request headers are intentionally not stored or logged. The 
 
 ### Configure and test locally
 
-1. Start MongoDB as a single-node replica set and set `MONGODB_URI` in `.env`.
-2. Set a merchant's `razorpayAccountId` to the Razorpay Test account ID delivered as `account_id` in its webhook payload.
-3. Set a long `RAZORPAY_WEBHOOK_SECRET` in `.env`; this is a webhook secret, not `RAZORPAY_KEY_SECRET`.
-4. Run `npm run dev` and expose `http://localhost:3000` with a public HTTPS tunnel accepted by Razorpay (their documentation suggests zrok because some common tunnels may be blocked).
-5. In the Razorpay Dashboard **Test Mode**, create a webhook using `https://<public-host>/api/webhooks/razorpay`, set the same secret, and subscribe to `payment.failed`, `payment.authorized`, and `payment.captured`.
-6. Make a Test Mode payment and select the failure or success flow. Razorpay will deliver a signed event. The Test Dashboard uses OTP `754081` when managing webhooks.
-7. Run `npm test` for fixture-based security, idempotency, state, conflict, and rollback tests without a Razorpay account or network.
+#### MongoDB Setup (required for transactions)
+
+MongoDB transactions require a replica set. For local development, run a single-node replica set:
+
+```powershell
+# 1. Create data directory
+mkdir C:\data\db
+
+# 2. Start MongoDB as a single-node replica set
+mongod --replSet rs0 --dbpath C:\data\db --port 27017
+
+# 3. In another terminal, initialize the replica set
+mongosh --eval "rs.initiate()"
+
+# 4. Verify replica set status (wait ~10 seconds)
+mongosh --eval "rs.status()"
+
+# 5. Update .env with the replica set URI
+# MONGODB_URI=mongodb://127.0.0.1:27017/recoverai?replicaSet=rs0
+```
+
+Verify transactions are working:
+```
+GET http://localhost:3000/api/health/transactions
+```
+Should return `{ "transactionsSupported": true }`.
+
+#### Razorpay Webhook Setup
+
+1. Set a merchant's `razorpayAccountId` to the Razorpay Test account ID delivered as `account_id` in its webhook payload.
+2. Set a long `RAZORPAY_WEBHOOK_SECRET` in `.env`; this is a webhook secret, not `RAZORPAY_KEY_SECRET`.
+3. Run `npm run dev` and expose `http://localhost:3000` with a public HTTPS tunnel accepted by Razorpay (their documentation suggests zrok because some common tunnels may be blocked).
+4. In the Razorpay Dashboard **Test Mode**, create a webhook using `https://<public-host>/api/webhooks/razorpay`, set the same secret, and subscribe to `payment.failed`, `payment.authorized`, `payment.captured`, and `payment_link.paid`.
+5. Make a Test Mode payment and select the failure or success flow. Razorpay will deliver a signed event. The Test Dashboard uses OTP `754081` when managing webhooks.
+6. Run `npm test` for fixture-based security, idempotency, state, conflict, and rollback tests without a Razorpay account or network.
+
+#### Webhook Diagnostics
+
+Check recent webhook events (requires authentication):
+```
+GET http://localhost:3000/api/webhooks/razorpay/events
+```
+
+If a payment was completed but the case didn't become RECOVERED:
+1. Check that the tunnel was running when the payment was made
+2. Check that the webhook secret matches between Razorpay Dashboard and `.env`
+3. Check that `payment_link.paid` is subscribed in Razorpay Dashboard
+4. Check the events endpoint above for received webhooks
+5. In Razorpay Dashboard, you can resend failed webhook deliveries
+6. After resending, verify the case status updates to RECOVERED
+
+#### Reconciling an already-completed payment
+
+If you completed a Razorpay TEST payment but the webhook wasn't received:
+1. Ensure MongoDB is running as a replica set (transactions supported)
+2. Ensure the backend is running and the tunnel is active
+3. In Razorpay Dashboard → Webhooks → find the `payment_link.paid` event → click "Resend"
+4. The webhook will be delivered to your tunnel URL
+5. Check `GET /api/webhooks/razorpay/events` to confirm receipt
+6. The case should automatically become RECOVERED with the correct recoveredAmount
 
 Razorpay’s validation guidance requires using the raw body and its `x-razorpay-event-id` header for idempotency. See [Validate and Test Webhooks](https://razorpay.com/docs/webhooks/validate-test/) and [Payments Webhook Events](https://razorpay.com/docs/webhooks/payments/).
 
@@ -128,7 +184,7 @@ Razorpay’s validation guidance requires using the raw body and its `x-razorpay
 - retry cap for `RETRY_PAYMENT`;
 - contact-attempt cap for `CUSTOMER_REMINDER`.
 
-Any future executor must persist the decision and write an AuditEvent before provider execution.
+The bounded executor (`recoveryExecutionService.js`) revalidates policy, persists the decision, and writes an `ACTION_EXECUTION_*` audit event before and after the provider call.
 
 ## AI-assisted recovery recommendation
 
@@ -206,7 +262,7 @@ Tests inject fake providers implementing the same `analyzeRecoveryCase(context)`
 - **Fetch payment details:** feasible through the Payments API.
 - **Capture an authorized payment:** feasible, but only when Razorpay has already authorized it; it is not a retry of a failed payment.
 - **Create a Standard Payment Link:** feasible in test mode and is the most realistic recovery action: issue a new customer payment opportunity, optionally using Razorpay notification. Test mode currently limits accounts to 30 links.
-- **Customer reminder:** can be represented through a payment-link notification/resend workflow once link creation and webhook verification are implemented.
+- **Customer reminder:** implemented as a Razorpay TEST Payment Link through the bounded execution adapter, with recovery confirmed only after a verified `payment_link.paid` webhook.
 - **Retry failed one-time payment:** not exposed as a generic Payments API operation. Treat as a controlled workflow or payment-link recovery, never claim the original payment was retried.
 - **Payment-method update:** no generic one-time-payment API action. Represent it as a customer recovery workflow; do not simulate a payment update as a transaction.
 - **UPI Payment Links:** Razorpay documentation states they are not supported in test mode.
@@ -226,7 +282,7 @@ Recommendation-only use does not require Razorpay API credentials. To execute a 
 
 `GET /api/analytics/overview` returns merchant-scoped revenue-at-risk, eligibility, execution, recovery, policy, fallback, and action/failure/status breakdown metrics. Recovered revenue is counted only when a case has a positive `recoveredAmount`, an executed action with a provider reference, and a Razorpay-authored `RECOVERY_COMPLETED` audit event. Payment Link creation alone is never recovery evidence.
 
-For development-only deterministic demo data, set `DEMO_ADMIN_PASSWORD` and run `node scripts/seedDemoData.js`. The seed uses stable upsert keys, hashes the password through `AuthService`, and deliberately seeds no recovered revenue because provider-confirmed Payment Link outcome ingestion is not implemented.
+For development-only deterministic demo data, set `DEMO_ADMIN_PASSWORD` and run `node scripts/seedDemoData.js`. The seed uses stable upsert keys, hashes the password through `AuthService`, and deliberately seeds no recovered revenue because no real Razorpay TEST payment has been completed.
 
 ## React merchant console
 
@@ -236,13 +292,14 @@ See [docs/frontend.md](docs/frontend.md) for the screen map, authentication flow
 
 ## Next increment
 
-A later provider-outcome ingestion increment can add genuine recovered-revenue records without changing the measurement rules.
+- Populate `RecoveryCase.diagnosis` from the AI/fallback `diagnosis` field (currently only in the audit event metadata and recommendation response).
+- Add monitoring for unprocessed webhook delivery failures.
+- Support additional AI providers beyond Anthropic.
 
 ## Current technical risks / unknowns
 
 - Standard Razorpay webhooks can be delayed, duplicated, or out of order. This service guards supported Payment state transitions but should eventually have monitoring for unprocessed delivery failures.
 - A one-time failed payment cannot be safely "retried" through the general Payments API; recovery must use a new collection flow.
-- Webhook delivery can repeat or arrive out of order; signature verification, a stored provider event ID, and transition guards are needed next.
 - MongoDB transactions need a replica set. The first increment should avoid requiring multi-document atomicity, or run the local database as a single-node replica set before adding transactional workflows.
 
 ## Development Progress
@@ -281,8 +338,10 @@ An LLM-generated recommendation is probabilistic and can be wrong or inconsisten
 - `tests/recoveryIntelligenceService.test.js` — 7 pure unit tests covering the high-value/low-retry retry recommendation, the retry-limit safe fallback, risk/fraud escalation, payment-method-issue detection, terminal-case ineligibility, low-confidence human-review flagging, and confidence bounds.
 - `tests/merchantScopedApi.test.js` — 13 HTTP-level tests (in-memory repositories, no live MongoDB needed, same pattern as the existing webhook tests) covering: login success/failure, unauthenticated rejection, merchant-scoped payment listing and cross-merchant 404s, merchant-scoped recovery case listing and detail (with populated payment), recommendation generation, the retry-limit safe recommendation, policy-blocked recommendations, the audit trail for a recommendation, recommendation idempotency, and a 404 for a nonexistent case.
 - All 11 pre-existing webhook/security tests are unchanged and still pass.
-- `npm test`: **33/33 passing.** `npm run check`: clean (extended to include every new source file).
+- `npm test`: **190/190 passing.** `npm run check`: clean (extended to include every new source file).
 
-### What the next increment should be
+### Current capabilities (this increment)
 
-Add the bounded AI recommendation layer: an LLM call that produces the same `{action, confidence, reason, factors, requiresHumanReview}` shape `recoveryIntelligenceService` returns today, so it can sit behind (or beside, as a comparison) the deterministic baseline without touching the policy engine, the recommendation endpoint, or the audit design. After that, design bounded, idempotent execution against Razorpay TEST payment links, with its own stopping rules (max attempts, cooldown) and `ACTION_EXECUTION_STARTED` / `_COMPLETED` / `_FAILED` audit events.
+- **AI-assisted recommendation.** The bounded AI recommendation layer is implemented: an LLM call (Anthropic) produces the same `{action, confidence, reason, factors, requiresHumanReview}` shape `recoveryIntelligenceService` returns, sitting behind the same deterministic policy gate. The deterministic fallback remains always available when no AI provider is configured.
+- **Bounded, idempotent execution.** `POST /api/recovery-actions/:id/execute` revalidates policy, atomically reserves an allowed action, and calls the Razorpay TEST payment-link adapter. Stopping rules (max attempts, cooldown, contact fatigue, terminal state, payment captured) are enforced before execution.
+- **Recovery confirmation.** A case becomes `RECOVERED` only after a genuine Razorpay `payment_link.paid` webhook is HMAC-verified and provider-confirmed, with the `recoveredAmount` taken from the provider-confirmed payment.

@@ -25,10 +25,18 @@ function calculateOverview({ payments = [], recoveryCases = [], recoveryActions 
   const paymentById = new Map(payments.map((payment) => [String(payment._id), payment]));
   const actionsByCase = groupBy(recoveryActions, (action) => String(action.recoveryCase));
   const evidenceCases = new Set(auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED && event.actor === ACTOR_TYPE.RAZORPAY).map((event) => String(event.recoveryCase)));
+
   const eligible = recoveryCases.filter((recoveryCase) => OPEN_RECOVERY_CASE_STATUSES.includes(recoveryCase.status) && paymentById.get(String(recoveryCase.payment))?.status === PAYMENT_STATUS.FAILED);
   const recovered = recoveryCases.filter((recoveryCase) => hasRecoveryEvidence(recoveryCase, actionsByCase.get(String(recoveryCase._id)), evidenceCases));
-  const revenueAtRisk = sum(eligible.map((recoveryCase) => paymentById.get(String(recoveryCase.payment)).amount));
-  const recoveredRevenue = sum(recovered.map((recoveryCase) => recoveryCase.recoveredAmount));
+
+  const revenueAtRisk = sum(eligible.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0));
+  const recoveredAmount = sum(recovered.map((recoveryCase) => recoveryCase.recoveredAmount || 0));
+  const recoveredRevenue = recoveredAmount;
+
+  const allFailedPaymentCases = recoveryCases.filter((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.status === PAYMENT_STATUS.FAILED);
+  const totalOpportunities = allFailedPaymentCases.length;
+  const totalOpportunityValue = sum(allFailedPaymentCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0));
+
   const attempts = recoveryActions.filter((action) => [RECOVERY_ACTION_STATUS.EXECUTING, RECOVERY_ACTION_STATUS.EXECUTED, RECOVERY_ACTION_STATUS.FAILED].includes(action.status));
 
   const diagnosedCases = recoveryCases.filter((recoveryCase) => recoveryCase.diagnosis && recoveryCase.diagnosis.explanation);
@@ -40,7 +48,6 @@ function calculateOverview({ payments = [], recoveryCases = [], recoveryActions 
   const stoppedActions = recoveryActions.filter((action) => action.policyDecision && action.policyDecision.reason && action.policyDecision.reason.includes('stopping'));
 
   const inRecoveryAmount = sum(recoveryCases.filter((recoveryCase) => [RECOVERY_CASE_STATUS.ACTION_PENDING, RECOVERY_CASE_STATUS.ACTION_EXECUTING].includes(recoveryCase.status)).map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0));
-  const recoveredAmount = sum(recovered.map((recoveryCase) => recoveryCase.recoveredAmount));
   const blockedAmount = sum(blockedActions.map((action) => paymentById.get(String(action.payment))?.amount || 0));
   const escalatedAmount = sum(escalatedCases.map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0));
   const unrecoveredAmount = sum(recoveryCases.filter((recoveryCase) => ![RECOVERY_CASE_STATUS.RECOVERED, RECOVERY_CASE_STATUS.CLOSED].includes(recoveryCase.status)).map((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.amount || 0)) - recoveredAmount;
@@ -48,11 +55,13 @@ function calculateOverview({ payments = [], recoveryCases = [], recoveryActions 
   return {
     revenueAtRisk,
     eligibleRecoveryCases: eligible.length,
+    recoveryOpportunities: totalOpportunities,
+    recoveryOpportunityValue: totalOpportunityValue,
     recoveryAttempts: attempts.length,
     successfulRecoveries: recovered.length,
     recoveredRevenue,
-    recoveryRate: rate(recovered.length, eligible.length),
-    recoveryValueRate: rate(recoveredRevenue, revenueAtRisk),
+    recoveryRate: rate(recovered.length, totalOpportunities),
+    recoveryValueRate: rate(recoveredRevenue, totalOpportunityValue),
     blockedActions: blockedActions.length,
     failedExecutions: recoveryActions.filter((action) => action.status === RECOVERY_ACTION_STATUS.FAILED).length,
     aiFallbacks: auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.AI_FALLBACK_USED).length,
@@ -80,6 +89,7 @@ function calculateOverview({ payments = [], recoveryCases = [], recoveryActions 
 
 function calculateOutcomes({ payments = [], recoveryCases = [], recoveryActions = [], auditEvents = [] }) {
   const paymentById = new Map(payments.map((payment) => [String(payment._id), payment]));
+  const recoveredAmountByCaseId = new Map(recoveryCases.filter((recoveryCase) => recoveryCase.recoveredAmount > 0).map((recoveryCase) => [String(recoveryCase._id), recoveryCase.recoveredAmount]));
   const evidenceCases = new Set(auditEvents.filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED && event.actor === ACTOR_TYPE.RAZORPAY).map((event) => String(event.recoveryCase)));
   const actionsByCase = groupBy(recoveryActions, (action) => String(action.recoveryCase));
 
@@ -89,19 +99,26 @@ function calculateOutcomes({ payments = [], recoveryCases = [], recoveryActions 
       .map((recoveryCase) => String(recoveryCase._id))
   );
 
+  const recoveredActionIds = new Set(
+    auditEvents
+      .filter((event) => event.type === AUDIT_EVENT_TYPE.RECOVERY_COMPLETED && event.actor === ACTOR_TYPE.RAZORPAY && event.recoveryAction)
+      .map((event) => String(event.recoveryAction))
+  );
+
   const outcomes = {};
   for (const actionType of Object.values(RECOVERY_ACTION_TYPE)) {
     if (actionType === RECOVERY_ACTION_TYPE.NO_ACTION) continue;
     const typeActions = recoveryActions.filter((action) => action.type === actionType);
     const recommended = typeActions.length;
     const executed = typeActions.filter((action) => action.status === RECOVERY_ACTION_STATUS.EXECUTED).length;
-    const recovered = typeActions.filter((action) => recoveredCases.has(String(action.recoveryCase))).length;
+    const recovered = typeActions.filter((action) => recoveredActionIds.has(String(action._id))).length;
+    const recoveredAmountForAction = sum(typeActions.filter((action) => recoveredActionIds.has(String(action._id))).map((action) => recoveredAmountByCaseId.get(String(action.recoveryCase)) || 0));
     outcomes[actionType] = {
       recommended,
       executed,
       recovered,
       recoveryRate: rate(recovered, recommended),
-      averageRecoveredAmount: executed > 0 ? sum(typeActions.filter((action) => recoveredCases.has(String(action.recoveryCase))).map((action) => paymentById.get(String(action.payment))?.amount || 0)) / executed : 0
+      averageRecoveredAmount: recovered > 0 ? recoveredAmountForAction / recovered : 0
     };
   }
 
@@ -115,30 +132,41 @@ function calculatePerformance({ payments = [], recoveryCases = [], recoveryActio
 
   const recoveredCases = recoveryCases.filter((recoveryCase) => hasRecoveryEvidence(recoveryCase, actionsByCase.get(String(recoveryCase._id)), evidenceCases));
   const eligibleCases = recoveryCases.filter((recoveryCase) => OPEN_RECOVERY_CASE_STATUSES.includes(recoveryCase.status) && paymentById.get(String(recoveryCase.payment))?.status === PAYMENT_STATUS.FAILED);
-  const totalEligible = eligibleCases.length;
+  const totalOpportunities = recoveryCases.filter((recoveryCase) => paymentById.get(String(recoveryCase.payment))?.status === PAYMENT_STATUS.FAILED).length;
 
   const daily = {};
   for (const recoveryCase of recoveredCases) {
     const day = dayKey(recoveryCase.resolvedAt || recoveryCase.createdAt);
     const amount = recoveryCase.recoveredAmount || 0;
-    if (!daily[day]) daily[day] = { recoveredCount: 0, recoveredAmount: 0, eligibleCount: 0 };
+    if (!daily[day]) daily[day] = { recoveredCount: 0, recoveredAmount: 0, eligibleCount: 0, opportunityCount: 0 };
     daily[day].recoveredCount += 1;
     daily[day].recoveredAmount += amount;
   }
-  for (const recoveryCase of eligibleCases) {
+  for (const recoveryCase of recoveryCases) {
     const day = dayKey(recoveryCase.createdAt);
-    if (!daily[day]) daily[day] = { recoveredCount: 0, recoveredAmount: 0, eligibleCount: 0 };
-    daily[day].eligibleCount += 1;
+    if (!daily[day]) daily[day] = { recoveredCount: 0, recoveredAmount: 0, eligibleCount: 0, opportunityCount: 0 };
+    if (paymentById.get(String(recoveryCase.payment))?.status === PAYMENT_STATUS.FAILED) {
+      daily[day].opportunityCount += 1;
+      if (OPEN_RECOVERY_CASE_STATUSES.includes(recoveryCase.status)) {
+        daily[day].eligibleCount += 1;
+      }
+    }
   }
 
+  let cumulativeRecovered = 0;
+  let cumulativeOpportunities = 0;
   const series = Object.entries(daily)
-    .map(([day, values]) => ({
-      day,
-      recoveredCount: values.recoveredCount,
-      recoveredAmount: values.recoveredAmount,
-      eligibleCount: values.eligibleCount,
-      recoveryRate: rate(values.recoveredCount, values.eligibleCount)
-    }))
+    .map(([day, values]) => {
+      cumulativeRecovered += values.recoveredCount;
+      cumulativeOpportunities += values.opportunityCount;
+      return {
+        day,
+        eligibleCount: values.eligibleCount,
+        recoveredCount: values.recoveredCount,
+        recoveredAmount: values.recoveredAmount,
+        recoveryRate: rate(cumulativeRecovered, cumulativeOpportunities)
+      };
+    })
     .sort((a, b) => a.day.localeCompare(b.day));
 
   const totalRecovered = recoveredCases.length;
@@ -153,9 +181,9 @@ function calculatePerformance({ payments = [], recoveryCases = [], recoveryActio
 
   return {
     summary: {
-      totalEligible,
+      totalEligible: eligibleCases.length,
       totalRecovered,
-      recoveryRate: rate(totalRecovered, totalEligible),
+      recoveryRate: rate(totalRecovered, totalOpportunities),
       recoveredAmount: totalRecoveredAmount,
       averageRecoveredAmount: totalRecovered > 0 ? totalRecoveredAmount / totalRecovered : 0,
       averageTimeToRecoveryMs: avgTimeToRecovery

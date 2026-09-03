@@ -14,6 +14,7 @@ function createRecoveryCaseController({
         const { page, limit } = parsePagination(req.query);
         const { items, pagination } = await repository.listRecoveryCases(req.auth.merchantId, {
           status: req.query.status,
+          sort: req.query.sort,
           page,
           limit
         });

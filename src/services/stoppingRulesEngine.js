@@ -28,6 +28,7 @@ function evaluateStoppingRules({ policy, payment, recoveryCase, action, existing
   evaluations.push(evaluateMaxRetries(policy, recoveryCase, action));
   evaluations.push(evaluateContactFatigue(policy, recoveryCase, action));
   evaluations.push(evaluateCooldown(policy, existingActions));
+  evaluations.push(evaluateEscalationCooldown(policy, existingActions, action));
   evaluations.push(evaluateAutomationExhausted(policy, recoveryCase));
 
   const escalations = evaluations.filter((e) => e.decision === STOPPING_DECISION.ESCALATE);
@@ -118,6 +119,28 @@ function evaluateCooldown(policy, existingActions) {
     };
   }
   return { decision: STOPPING_DECISION.ALLOW, rule: 'COOLDOWN', reason: 'Cooldown period has elapsed.', evidence: {} };
+}
+
+function evaluateEscalationCooldown(policy, existingActions, action) {
+  if (action !== RECOVERY_ACTION_TYPE.ESCALATE_TO_HUMAN || !policy.escalationCooldownMinutes || existingActions.length === 0) {
+    return { decision: STOPPING_DECISION.ALLOW, rule: 'ESCALATION_COOLDOWN', reason: 'No escalation cooldown is blocking this action.', evidence: {} };
+  }
+  const lastEscalation = [...existingActions]
+    .filter((candidate) => candidate.type === RECOVERY_ACTION_TYPE.ESCALATE_TO_HUMAN)
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())[0];
+  if (!lastEscalation) return { decision: STOPPING_DECISION.ALLOW, rule: 'ESCALATION_COOLDOWN', reason: 'No prior escalation exists.', evidence: {} };
+  const elapsedMs = Date.now() - new Date(lastEscalation.createdAt).getTime();
+  const cooldownMs = policy.escalationCooldownMinutes * 60 * 1000;
+  if (elapsedMs < cooldownMs) {
+    const remainingMinutes = Math.ceil((cooldownMs - elapsedMs) / 60000);
+    return {
+      decision: STOPPING_DECISION.BLOCK,
+      rule: 'ESCALATION_COOLDOWN',
+      reason: `Escalation cooldown period (${policy.escalationCooldownMinutes} min) has not elapsed. ${remainingMinutes} minute(s) remaining.`,
+      evidence: { lastEscalationAt: lastEscalation.createdAt, escalationCooldownMinutes: policy.escalationCooldownMinutes, remainingMinutes }
+    };
+  }
+  return { decision: STOPPING_DECISION.ALLOW, rule: 'ESCALATION_COOLDOWN', reason: 'Escalation cooldown period has elapsed.', evidence: {} };
 }
 
 function evaluateAutomationExhausted(policy, recoveryCase) {

@@ -36,11 +36,11 @@ Build command: `npm run build` · Publish directory: `dist`
 3. **Verify backend**: open `https://<render-app>.onrender.com/api/health` until it responds. (Free tier sleeps after ~15 min idle; hit it before the demo, or attach a free uptime pinger.)
 4. **Netlify → Add new site**, connect the repo with base directory `frontend`, or deploy `frontend/dist` manually after building locally with `VITE_API_BASE_URL` set.
 5. **Set frontend env var** `VITE_API_BASE_URL` to the Render URL **before building**, then redeploy so it is baked into the bundle.
-6. **Smoke test from the browser**: login → Recovery Cases → open the recovered `demo_limit` case → Audit Trail. Check DevTools console has no CORS errors.
+6. **Smoke test from the browser**: login → Recovery Cases → open any case → Audit Trail. Check DevTools console has no CORS errors.
 7. **Only then configure Razorpay**: Dashboard → Settings → Webhooks → add
    `https://<render-app>.onrender.com/api/webhooks/razorpay`
    with event(s) `payment_link.paid` (plus `payment.captured`/`payment.failed` if used), using the same `RAZORPAY_WEBHOOK_SECRET`. Keep the account in **TEST MODE**.
-8. Do not create payment links or payments during validation; the existing recovered data stays intact.
+8. Do not create payment links or payments during validation; the demo seed starts with ₹0 recovered revenue.
 
 ## Local behavior is unchanged
 With no `CORS_ORIGIN` and no `VITE_API_BASE_URL`, both additions are inert: the Vite proxy keeps serving `/api` same-origin exactly as before.

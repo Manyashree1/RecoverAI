@@ -3,6 +3,8 @@ const Payment = require('../models/Payment');
 const RecoveryCase = require('../models/RecoveryCase');
 const AuditEvent = require('../models/AuditEvent');
 const RecoveryAction = require('../models/RecoveryAction');
+const { RecoveryPolicy } = require('../models/RecoveryPolicy');
+const { computeRecoveryScore } = require('../services/recoveryScoreService');
 const { OPEN_RECOVERY_CASE_STATUSES, PAYMENT_STATUS, AUDIT_EVENT_TYPE } = require('../constants/enums');
 
 const DEFAULT_PAGE = 1;
@@ -34,11 +36,42 @@ class ReadRepository {
     return Payment.findOne({ _id: paymentId, merchant: merchantId }).lean();
   }
 
-  async listRecoveryCases(merchantId, { status, page, limit } = {}) {
+  async listRecoveryCases(merchantId, { status, page, limit, sort = 'priority' } = {}) {
     const query = { merchant: merchantId };
     if (status === 'OPEN') query.status = { $in: OPEN_RECOVERY_CASE_STATUSES };
     else if (status) query.status = status;
-    const { items, pagination } = await paginate(RecoveryCase, query, { page, limit, sort: { createdAt: -1 } });
+    const [allCases, total] = await Promise.all([
+      RecoveryCase.find(query).sort({ createdAt: -1 }).lean(),
+      RecoveryCase.countDocuments(query)
+    ]);
+    const paymentIds = allCases.map((item) => item.payment).filter(Boolean);
+    const [payments, policy, allActions] = await Promise.all([
+      paymentIds.length ? Payment.find({ _id: { $in: paymentIds }, merchant: merchantId }).lean() : [],
+      RecoveryPolicy.findOne({ merchant: merchantId }).lean(),
+      allCases.length ? RecoveryAction.find({ merchant: merchantId, recoveryCase: { $in: allCases.map((item) => item._id) } }).sort({ createdAt: -1 }).lean() : []
+    ]);
+    const paymentById = new Map(payments.map((payment) => [String(payment._id), payment]));
+    const actionByCase = new Map();
+    for (const action of allActions) {
+      if (!actionByCase.has(String(action.recoveryCase))) actionByCase.set(String(action.recoveryCase), action);
+    }
+    const scoredCases = allCases.map((item) => {
+      const score = computeRecoveryScore({ payment: paymentById.get(String(item.payment)), recoveryCase: item, policy });
+      const action = actionByCase.get(String(item._id));
+      return {
+        ...item,
+        recoveryScore: score.score,
+        recoveryScoreClassification: score.classification,
+        recoveryScoreConfidence: score.confidence,
+        recommendedAction: action?.type || null,
+        policyDecision: action?.policyDecision?.decision || null
+      };
+    });
+    scoredCases.sort(sort === 'recent' ? (left, right) => new Date(right.createdAt) - new Date(left.createdAt) : (left, right) => right.recoveryScore - left.recoveryScore || new Date(right.createdAt) - new Date(left.createdAt));
+    const safePage = Math.max(1, Number.isFinite(page) ? page : DEFAULT_PAGE);
+    const safeLimit = Math.min(MAX_LIMIT, Math.max(1, Number.isFinite(limit) ? limit : DEFAULT_LIMIT));
+    const items = scoredCases.slice((safePage - 1) * safeLimit, safePage * safeLimit);
+    const pagination = { page: safePage, limit: safeLimit, total, totalPages: Math.max(1, Math.ceil(total / safeLimit)) };
 
     // Read-only relationship evidence for list consumers: the provider payment
     // IDs (e.g. Razorpay pay_*) produced by each case's executed recovery

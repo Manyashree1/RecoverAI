@@ -20,10 +20,12 @@ import {
   Bot,
   CheckCircle2,
   CircleDollarSign,
+  Clipboard,
   ClipboardList,
   Clock3,
   FileSearch,
   Filter,
+  Layers,
   Lock,
   LogOut,
   Menu,
@@ -43,6 +45,7 @@ import {
   EmptyState,
   ErrorState,
   EvidenceNote,
+  EvidenceTimeline,
   LoadingState,
   Logo,
   MetricCard,
@@ -55,6 +58,7 @@ import {
 
 function App() {
   const [session, setSession] = useState(Boolean(getToken()));
+  const [webhookInfo, setWebhookInfo] = useState(null);
 
   useEffect(() => {
     const onUnauthorized = () => setSession(false);
@@ -65,6 +69,13 @@ function App() {
       window.removeEventListener('recoverai:unauthorized', onUnauthorized);
     };
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    api.webhookInfo()
+      .then((data) => setWebhookInfo(data.data || data))
+      .catch(() => setWebhookInfo(null));
+  }, [session]);
 
   if (!session) {
     return (
@@ -86,6 +97,7 @@ function App() {
               clearSession();
               setSession(false);
             }}
+            webhookInfo={webhookInfo}
           />
         }
       >
@@ -97,6 +109,7 @@ function App() {
         <Route path="/recovery-actions" element={<Actions />} />
         <Route path="/recovery-policy" element={<Policy />} />
         <Route path="/recovery-intelligence" element={<Intelligence />} />
+        <Route path="/recovery-batch" element={<RecoveryBatch />} />
         <Route path="/audit" element={<Audit />} />
       </Route>
 
@@ -218,8 +231,9 @@ function LockIcon() {
   return <ShieldCheck size={14} />;
 }
 
-function Shell({ onLogout }) {
+function Shell({ onLogout, webhookInfo }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const user = getUser();
 
   const links = [
@@ -229,8 +243,22 @@ function Shell({ onLogout }) {
     ['/recovery-actions', 'Recovery Actions', Zap],
     ['/recovery-policy', 'Recovery Policy', ShieldCheck],
     ['/recovery-intelligence', 'Recovery Intelligence', Activity],
+    ['/recovery-batch', 'Recovery Batch', Layers],
     ['/audit', 'Audit Trail', FileSearch],
   ];
+
+  const webhookUrl = webhookInfo?.configured ? webhookInfo.webhookUrl : null;
+
+  const copyWebhookUrl = async () => {
+    if (!webhookUrl) return;
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -318,6 +346,17 @@ function Shell({ onLogout }) {
             <span className="environment">
               <span /> Razorpay TEST MODE
             </span>
+
+            {webhookUrl && (
+              <>
+                <span className="topbar-divider" />
+                <button className="webhook-url" onClick={copyWebhookUrl} title={copied ? 'Copied' : 'Copy webhook URL'}>
+                  <span className="muted">Webhook</span>
+                  <span className="mono">{webhookUrl.replace(/^https:\/\//, '')}</span>
+                  {copied ? <CheckCircle2 size={12} /> : <Clipboard size={12} />}
+                </button>
+              </>
+            )}
 
             <span className="topbar-divider" />
 
@@ -422,6 +461,12 @@ function Overview() {
         }
       />
 
+      {getUser()?.email === 'demo@recoverai.test' && (
+        <div className="demo-banner">
+          <span className="demo-dot" /> Demo mode — seeded revenue is ₹0. Recovery requires a live Razorpay TEST payment + provider webhook.
+        </div>
+      )}
+
       <section className="hero-band">
         <div>
           <span className="kicker">The recovery signal</span>
@@ -460,7 +505,7 @@ function Overview() {
           icon={BarChart3}
           label="Recovery rate"
           value={percent(overview.recoveryRate)}
-          detail="Recovered cases / eligible at-risk cases"
+          detail="Recovered / total recovery opportunities"
           tone="green"
         />
 
@@ -737,6 +782,7 @@ function Payments() {
             placeholder="Search payment or provider ID"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            aria-label="Search payments"
           />
         </div>
 
@@ -784,6 +830,18 @@ function Payments() {
                         : `/payments/${payment.id}`
                     )
                   }
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      navigate(
+                        journeyCase
+                          ? `/recovery-cases/${journeyCase.id}`
+                          : `/payments/${payment.id}`
+                      );
+                    }
+                  }}
+                  tabIndex={0}
+                  role="link"
                 >
                   <td>
                     <strong className="mono">
@@ -848,12 +906,14 @@ function isStoppingRuleReason(reason) {
 }
 
 function decisionSource(itemAction) {
+  if (itemAction.policyDecision?.escalate) return 'stopping';
   if (!itemAction.policyDecision?.reason) return 'policy';
   return isStoppingRuleReason(itemAction.policyDecision.reason) ? 'stopping' : 'policy';
 }
 
 function RecoveryCases() {
   const [status, setStatus] = useState('OPEN');
+  const [sort, setSort] = useState('priority');
 
   const {
     loading,
@@ -864,9 +924,10 @@ function RecoveryCases() {
     () =>
       api.cases({
         limit: 100,
+        sort,
         ...(status ? { status } : {}),
       }),
-    [status]
+    [status, sort]
   );
 
   const cases = data?.data || [];
@@ -901,6 +962,16 @@ function RecoveryCases() {
         ))}
       </div>
 
+      <div className="toolbar">
+        <label className="select-field">
+          <span className="field-label">Sort cases</span>
+          <select value={sort} onChange={(event) => setSort(event.target.value)}>
+            <option value="priority">Highest recovery potential</option>
+            <option value="recent">Most recent</option>
+          </select>
+        </label>
+      </div>
+
       {loading ? (
         <LoadingState text="Loading recovery cases" />
       ) : error ? (
@@ -925,6 +996,12 @@ function RecoveryCases() {
                 {label(item.diagnosis?.category || item.status)}
               </h3>
 
+              <div className="case-score">
+                <span>Recovery potential</span>
+                <strong>{item.recoveryScore ?? 'N/A'}/100</strong>
+                <small>{label(item.recoveryScoreClassification || 'NOT_SCORED')}</small>
+              </div>
+
               <p>
                 {item.diagnosis?.explanation ||
                   'Awaiting diagnosis and the next policy-gated recovery decision.'}
@@ -937,6 +1014,10 @@ function RecoveryCases() {
 
                 <span>
                   Contacts <b>{item.customerContactAttempts ?? 0}</b>
+                </span>
+
+                <span>
+                  Action <b>{label(item.recommendedAction || 'Pending')}</b>
                 </span>
 
                 <ChevronRightIcon />
@@ -955,6 +1036,10 @@ function RecoveryCases() {
   );
 }
 
+function ChevronIcon() {
+  return <ArrowUpRight size={15} />;
+}
+
 function ChevronRightIcon() {
   return <ArrowUpRight size={17} />;
 }
@@ -969,6 +1054,9 @@ function CaseDetail() {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [scoreData, setScoreData] = useState(null);
+  const [reconcileResult, setReconcileResult] = useState(null);
+  const [reconcileError, setReconcileError] = useState('');
+  const [reconciling, setReconciling] = useState(false);
 
   const caseRequest = useRequest(
     () => api.case(id),
@@ -977,6 +1065,11 @@ function CaseDetail() {
 
   const scoreRequest = useRequest(
     () => api.caseScore(id),
+    [id]
+  );
+
+  const auditRequest = useRequest(
+    () => api.audit({ recoveryCase: id, limit: 50 }),
     [id]
   );
 
@@ -1048,6 +1141,28 @@ function CaseDetail() {
       setActionError(error.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const reconcilePaymentLink = async () => {
+    const paymentLinkId = primaryAction?.paymentLink?.id || primaryAction?.execution?.providerReference;
+    if (!paymentLinkId) return;
+
+    setReconciling(true);
+    setReconcileError('');
+    setReconcileResult(null);
+
+    try {
+      const result = await apiFetch(`/api/recovery-actions/${primaryAction.id}/reconcile-paid-link`, {
+        method: 'POST',
+        body: JSON.stringify({ paymentLinkId })
+      });
+      setReconcileResult(result);
+      caseRequest.reload();
+    } catch (error) {
+      setReconcileError(error.message);
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -1216,6 +1331,17 @@ function CaseDetail() {
             </div>
           </section>
 
+          <section className="detail-panel evidence-timeline-panel">
+            <div className="panel-label">
+              <Clock3 size={15} /> Recovery evidence timeline
+            </div>
+            <EvidenceTimeline
+              case={item}
+              actions={item.recoveryActions || []}
+              auditEvents={(auditRequest.data?.data?.items || []).map((evt) => ({ ...evt, createdAt: evt.createdAt }))}
+            />
+          </section>
+
           <section
             className={`detail-panel recovery-outcome ${
               item.status === 'RECOVERED'
@@ -1346,7 +1472,7 @@ function CaseDetail() {
             const escalationAction = (item.recoveryActions || []).find((a) => a.type === 'ESCALATE_TO_HUMAN');
             if (!escalationAction) return null;
             const escalationReason = escalationAction.policyDecision?.reason || 'Maximum automated attempts reached.';
-            const isStoppingRule = /retry count|contacted|exhausted|cooldown|fatigue|automation channels/i.test(escalationReason);
+            const isStoppingRule = escalationAction.policyDecision?.escalate || /retry count|contacted|exhausted|cooldown|fatigue|automation channels/i.test(escalationReason);
             const isPolicyBlock = !isStoppingRule;
             const stoppingRuleMatch = escalationReason.match(/(MAX_RETRIES_EXHAUSTED|CONTACT_FATIGUE|AUTOMATION_EXHAUSTED|COOLDOWN|TERMINAL_STATE|PAYMENT_CAPTURED)/i);
             const stoppingRuleLabel = stoppingRuleMatch ? stoppingRuleMatch[1].replace(/_/g, ' ').toLowerCase() : null;
@@ -1354,14 +1480,14 @@ function CaseDetail() {
               <section className="detail-panel escalation-panel">
                 <div className="panel-heading">
                   <div>
-                    <span className="eyebrow">{isPolicyBlock ? 'Policy decision' : 'Stopping rule'}</span>
-                    <h2>{isPolicyBlock ? 'Policy blocked this action' : 'Automation stopped — requires human review'}</h2>
+                    <span className="eyebrow">{isPolicyBlock ? 'Policy decision' : 'Escalated by safety rule'}</span>
+                    <h2>{isPolicyBlock ? 'Blocked by merchant policy' : 'Escalated by safety rule — requires human review'}</h2>
                   </div>
                   <AlertIcon />
                 </div>
                 <div className="escalation-summary">
                   <p>
-                    <strong>{isPolicyBlock ? 'Policy blocked.' : 'Automation stopped.'}</strong>{' '}
+                    <strong>{isPolicyBlock ? 'Blocked by merchant policy.' : 'Escalated by safety rule.'}</strong>{' '}
                     {escalationReason}
                   </p>
                   <div className="escalation-meta">
@@ -1476,6 +1602,29 @@ function CaseDetail() {
                 </a>
               )}
 
+              {primaryAction.paymentLink?.id && !primaryAction.paymentLink?.providerPaymentId && !isTerminal && (
+                <button
+                  className="secondary-button compact"
+                  onClick={reconcilePaymentLink}
+                  disabled={reconciling}
+                >
+                  {reconciling ? 'Checking...' : 'Check payment link status'}
+                </button>
+              )}
+
+              {reconcileResult && (
+                <div className={`history-evidence ${reconcileResult.outcome === 'RECOVERED' ? 'paid' : reconcileResult.outcome === 'REJECTED' ? 'error' : ''}`} style={{ marginTop: '8px' }}>
+                  {reconcileResult.outcome === 'RECOVERED' && <><CheckCircle2 size={14} /> Recovery confirmed via reconciliation.</>}
+                  {reconcileResult.outcome === 'PENDING' && <><Clock3 size={14} /> Payment link not yet paid.</>}
+                  {reconcileResult.outcome === 'REJECTED' && <><AlertTriangle size={14} /> {reconcileResult.reason || 'Invalid payment link status.'}</>}
+                  {reconcileResult.outcome === 'IGNORED' && <><AlertTriangle size={14} /> Could not reconcile this link.</>}
+                </div>
+              )}
+
+              {reconcileError && (
+                <div className="form-error" style={{ marginTop: '8px' }}>{reconcileError}</div>
+              )}
+
               {primaryAction.paymentLink
                 ?.providerPaymentId && (
                 <div
@@ -1499,11 +1648,13 @@ function CaseDetail() {
               <div className="panel-heading">
                 <div>
                   <span className="eyebrow">
-                    Other policy decisions
+                    {item.status === 'RECOVERED'
+                      ? 'Historical policy decisions'
+                      : 'Other policy decisions'}
                   </span>
 
                   <h2>
-                    {secondaryActions.length} additional
+                    {secondaryActions.length} {item.status === 'RECOVERED' ? 'historical' : 'additional'}
                     action
                     {secondaryActions.length !== 1
                       ? 's'
@@ -1536,6 +1687,7 @@ function CaseDetail() {
 
                     <div className="history-meta">
                       <span>
+                        {item.status === 'RECOVERED' && 'Historical action · '}
                         Status{' '}
                         <b>
                           {label(itemAction.status)}
@@ -1592,7 +1744,7 @@ function CaseDetail() {
                   <strong>{label(scoreData.classification)}</strong>
                 </div>
                 <div>
-                  <span className="field-label">Confidence</span>
+                  <span className="field-label">Evidence confidence</span>
                   <strong>{percent(scoreData.confidence)}</strong>
                 </div>
               </div>
@@ -1607,7 +1759,7 @@ function CaseDetail() {
                 </div>
               )}
               <EvidenceNote>
-                This is a deterministic recovery score derived from persisted evidence only. It is not an ML prediction and no customer history is fabricated.
+                This deterministic score estimates how recoverable the case is from persisted evidence. Evidence confidence describes the score inputs; AI recommendation confidence describes confidence in a proposed action. They are different measures, and this score is not an ML prediction.
               </EvidenceNote>
             </section>
           )}
@@ -1665,6 +1817,12 @@ function CaseDetail() {
                   {recommendationData?.reason ||
                     recommendation?.policyDecision?.reason}
                 </p>
+
+                {recommendation?.recoveryAction?.capability && (
+                  <EvidenceNote>
+                    Execution boundary: {recommendation.recoveryAction.capability.label}
+                  </EvidenceNote>
+                )}
 
                 <div className="recommendation-meta">
                   <span>
@@ -1842,6 +2000,11 @@ function CaseDetail() {
         <div
           className="dialog-backdrop"
           role="presentation"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setConfirming(false);
+            }
+          }}
         >
           <section
             className="confirm-dialog"
@@ -2602,7 +2765,7 @@ function Actions() {
         <LoadingState text="Loading action ledger" />
       ) : error ? (
         <ErrorState message={error} />
-      ) : (
+      ) : items.length ? (
         <div className="table-shell">
           <table>
             <thead>
@@ -2618,7 +2781,7 @@ function Actions() {
 
             <tbody>
               {items.map((itemAction) => (
-                <tr key={itemAction.id}>
+                <tr key={itemAction.id || `${itemAction.type}-${itemAction.createdAt}`}>
                   <td>
                     <strong>
                       {label(itemAction.type)}
@@ -2656,7 +2819,7 @@ function Actions() {
                             }
                           />
                           <span className={`cell-source ${decisionSource(itemAction)}`}>
-                            {decisionSource(itemAction) === 'stopping' ? 'Stopping rule' : 'Policy'}
+                            {decisionSource(itemAction) === 'stopping' ? 'Escalated by safety rule' : 'Blocked by merchant policy'}
                           </span>
                         </>
                       ) : (
@@ -2730,6 +2893,8 @@ function Actions() {
             </tbody>
           </table>
         </div>
+      ) : (
+        <EmptyState icon={Zap} title="No recovery actions found" text="Actions will appear after RecoverAI records a recommendation for a recovery case." />
       )}
 
       <div className="ledger-footer">
@@ -2758,14 +2923,15 @@ function Policy() {
     try {
       const result = await api.policy();
       setPolicy(result.data);
-      setForm({
-        maxAutomaticRetries: result.data.maxAutomaticRetries,
-        maxCustomerContactAttempts: result.data.maxCustomerContactAttempts,
-        cooldownMinutes: result.data.cooldownMinutes,
-        escalationCooldownMinutes: result.data.escalationCooldownMinutes,
-        allowedActions: [...(result.data.allowedActions || [])],
-        expectedVersion: result.data.version
-      });
+        setForm({
+          maxAutomaticRetries: result.data.maxAutomaticRetries,
+          maxCustomerContactAttempts: result.data.maxCustomerContactAttempts,
+          maxTransactionAmount: result.data.maxTransactionAmount / 100,
+          cooldownMinutes: result.data.cooldownMinutes,
+          escalationCooldownMinutes: result.data.escalationCooldownMinutes,
+          allowedActions: [...(result.data.allowedActions || [])],
+          expectedVersion: result.data.version
+        });
       setDirty(false);
     } catch (err) {
       setError(err.message);
@@ -2806,6 +2972,7 @@ function Policy() {
       const payload = {
         maxAutomaticRetries: form.maxAutomaticRetries,
         maxCustomerContactAttempts: form.maxCustomerContactAttempts,
+        maxTransactionAmount: Math.round(form.maxTransactionAmount * 100),
         cooldownMinutes: form.cooldownMinutes,
         escalationCooldownMinutes: form.escalationCooldownMinutes,
         allowedActions: form.allowedActions,
@@ -2854,10 +3021,10 @@ function Policy() {
   }
 
   const actionOptions = [
-    { value: 'CUSTOMER_REMINDER', label: 'Customer Reminder', description: 'Create a payment link and send it to the customer.' },
-    { value: 'RETRY_PAYMENT', label: 'Retry Payment', description: 'Automatically retry the failed payment.' },
-    { value: 'PAYMENT_METHOD_UPDATE', label: 'Payment Method Update', description: 'Ask the customer to update their payment method.' },
-    { value: 'ESCALATE_TO_HUMAN', label: 'Escalate to Human', description: 'Route the case to a human reviewer.' }
+    { value: 'CUSTOMER_REMINDER', label: 'Customer Reminder', description: 'Executable: creates a Razorpay TEST payment link; provider confirmation is still required.' },
+    { value: 'RETRY_PAYMENT', label: 'Retry Payment', description: 'Recommendation only: direct charge retry is not supported by the current TEST adapter.' },
+    { value: 'PAYMENT_METHOD_UPDATE', label: 'Payment Method Update', description: 'Recommendation only: requires customer interaction outside the current adapter.' },
+    { value: 'ESCALATE_TO_HUMAN', label: 'Escalate to Human', description: 'Human workflow; no automatic provider action is performed.' }
   ];
 
   const allowedSet = new Set(form.allowedActions || []);
@@ -2903,6 +3070,7 @@ function Policy() {
                     </div>
                   </label>
                 ))}
+                <p className="policy-actions-note">Policy controls which recovery paths are permitted; actual execution is additionally constrained by RecoverAI's bounded executor and provider capabilities.</p>
               </div>
             </section>
 
@@ -2927,6 +3095,22 @@ function Policy() {
                     value={form.maxAutomaticRetries}
                     onChange={(e) => updateField('maxAutomaticRetries', Number(e.target.value))}
                   />
+                </label>
+                <label className="policy-field">
+                  <span>
+                    <strong>Maximum automatic recovery amount</strong>
+                    <small>Payment amounts above this merchant-controlled limit cannot be recovered automatically.</small>
+                  </span>
+                  <span className="amount-input">
+                    <span className="amount-prefix">₹</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="1000000"
+                      value={form.maxTransactionAmount}
+                      onChange={(e) => updateField('maxTransactionAmount', Number(e.target.value))}
+                    />
+                  </span>
                 </label>
                 <label className="policy-field">
                   <span>
@@ -3070,6 +3254,106 @@ function Policy() {
   );
 }
 
+function auditEventStage(event) {
+  if (event.type === 'PAYMENT_FAILED' || event.type === 'RECOVERY_CASE_CREATED') return 'Detection';
+  if (event.type === 'AI_ANALYSIS_STARTED' || event.type === 'AI_RECOMMENDATION_GENERATED' || event.type === 'AI_FALLBACK_USED') return 'Recommendation';
+  if (event.type === 'POLICY_EVALUATED') return 'Policy';
+  if (event.type === 'ACTION_EXECUTION_STARTED' || event.type === 'ACTION_EXECUTION_COMPLETED') return 'Execution';
+  if (event.type === 'RECOVERY_COMPLETED') return 'Recovery';
+  if (event.type === 'ACTION_EXECUTION_BLOCKED' || event.type === 'ACTION_EXECUTION_FAILED' || event.type === 'RECOVERY_CASE_CLOSED') return 'Outcome';
+  return 'Evidence';
+}
+
+function auditCaseKey(event, index) {
+  return event.recoveryCase || `unassigned-${event.payment || 'event'}-${index}`;
+}
+
+function auditFinalStatus(events) {
+  if (events.some((event) => event.type === 'RECOVERY_COMPLETED')) return 'RECOVERED';
+  if (events.some((event) => event.type === 'ACTION_EXECUTION_FAILED')) return 'FAILED_EXECUTION';
+  if (events.some((event) => event.type === 'ACTION_EXECUTION_BLOCKED')) return 'EXECUTION_BLOCKED';
+  if (events.some((event) => event.type === 'POLICY_EVALUATED' && event.policyDecision === 'BLOCKED')) return 'POLICY_BLOCKED';
+  if (events.some((event) => event.type === 'ESCALATED_TO_HUMAN' || event.result === 'ESCALATED_TO_HUMAN')) return 'ESCALATED';
+  return 'IN_PROGRESS';
+}
+
+function buildAuditStories(events) {
+  const stories = new Map();
+  events.forEach((event, index) => {
+    const key = auditCaseKey(event, index);
+    if (!stories.has(key)) stories.set(key, []);
+    stories.get(key).push(event);
+  });
+  return [...stories.entries()].map(([key, caseEvents]) => ({
+    key,
+    isUnlinked: key.startsWith('unassigned-'),
+    events: caseEvents.sort((left, right) => new Date(left.createdAt) - new Date(right.createdAt)),
+    finalStatus: auditFinalStatus(caseEvents)
+  })).sort((left, right) => new Date(right.events.at(-1)?.createdAt || 0) - new Date(left.events.at(-1)?.createdAt || 0));
+}
+
+function buildAuditAttempts(events) {
+  const attempts = [];
+  const byAction = new Map();
+  for (const event of events) {
+    const actionKey = event.recoveryAction || event.action;
+    if (actionKey) {
+      if (!byAction.has(actionKey)) {
+        const attempt = { label: `Attempt ${attempts.length + 1}`, events: [] };
+        attempts.push(attempt);
+        byAction.set(actionKey, attempt);
+      }
+      byAction.get(actionKey).events.push(event);
+    } else {
+      const latest = attempts.at(-1);
+      if (latest && ['AI_ANALYSIS_STARTED', 'AI_RECOMMENDATION_GENERATED', 'AI_FALLBACK_USED'].includes(event.type)) latest.events.push(event);
+      else attempts.push({ label: attempts.length ? `Evidence ${attempts.length + 1}` : 'Detection', events: [event] });
+    }
+  }
+  return attempts;
+}
+
+function auditPatternGroups(stories) {
+  const groups = new Map();
+  for (const story of stories) {
+    const recommendation = story.events.find((event) => event.action && event.type === 'ACTION_RECOMMENDED');
+    const policy = story.events.find((event) => event.type === 'POLICY_EVALUATED');
+    const action = recommendation?.action || policy?.action || 'No action recorded';
+    const policyReason = policy?.reason || 'No policy decision recorded';
+    const key = `${action}|${policyReason}|${story.finalStatus}`;
+    if (!groups.has(key)) groups.set(key, { action, policyReason, finalStatus: story.finalStatus, stories: [] });
+    groups.get(key).stories.push(story);
+  }
+  return [...groups.values()].sort((left, right) => right.stories.length - left.stories.length);
+}
+
+function AuditRawEvents({ events }) {
+  return <details className="audit-disclosure">
+    <summary><FileSearch size={14} /> View raw events ({events.length})</summary>
+    <div className="timeline">
+      {[...events].reverse().map((event, index) => <div key={event.id || `${event.type}-${event.createdAt}-${index}`}><TimelineItem event={event} demo={isDemoEvent(event)} /><div className="audit-raw-details"><span>Case: {event.recoveryCase || 'Not linked'}</span><span>Payment: {event.payment || 'Not linked'}</span><span>Provider: {event.metadata?.provider || 'Not specified'}</span><span>Event ID: {event.providerEventId || 'Not recorded'}</span><span>Result: {event.result || 'Not recorded'}</span>{event.metadata && <pre>{JSON.stringify(event.metadata, null, 2)}</pre>}</div></div>)}
+    </div>
+  </details>;
+}
+
+function AuditStory({ story }) {
+  const events = story.events;
+  const latest = events.at(-1);
+  const completed = events.find((event) => event.type === 'RECOVERY_COMPLETED');
+  const amount = completed?.metadata?.amount || events.find((event) => event.metadata?.amount)?.metadata?.amount;
+  const recommendation = events.find((event) => event.type === 'ACTION_RECOMMENDED');
+  const attempts = buildAuditAttempts(events);
+  return <article className={`audit-story audit-story-${story.finalStatus.toLowerCase()}`}>
+    <div className="audit-story-header">
+      <div><span className="eyebrow">{story.isUnlinked ? 'Provider event' : 'Recovery case'}</span><h2>{story.isUnlinked ? 'Unlinked provider evidence' : story.key}</h2><p>{amount ? currency(amount, completed?.metadata?.currency || 'INR') : story.isUnlinked ? 'Payment amount available in the linked payment record' : 'Amount not recorded in these events'}{recommendation?.action ? ` · ${label(recommendation.action)}` : ''}</p></div>
+      <div className="audit-story-outcome">{story.finalStatus === 'RECOVERED' ? <><strong>✓ RECOVERED</strong><span>{amount ? currency(amount, completed?.metadata?.currency || 'INR') : 'Confirmed by Razorpay'}</span><small>Confirmed by Razorpay</small></> : <StatusBadge value={story.finalStatus} />}</div>
+    </div>
+    <div className="audit-story-meta"><span>Latest <b>{dateTime(latest?.createdAt)}</b></span><span>Events <b>{events.length}</b></span><span>Attempts <b>{attempts.filter((attempt) => attempt.label.startsWith('Attempt')).length}</b></span></div>
+    <div className="audit-attempts">{attempts.map((attempt, index) => <details key={`${attempt.label}-${index}`} open={attempts.length === 1}><summary>{attempt.label}<span>{attempt.events.length} event{attempt.events.length === 1 ? '' : 's'}</span></summary><div className="audit-stage-list">{attempt.events.map((event, eventIndex) => <div className="audit-stage" key={event.id || `${event.type}-${event.createdAt}-${eventIndex}`}><span className="audit-stage-name">{auditEventStage(event)}</span><div><strong>{label(event.type)}</strong>{event.action && <span className="timeline-tag">{label(event.action)}</span>}<time>{dateTime(event.createdAt)}</time><p>{event.reason || event.result || 'Event recorded.'}</p>{event.metadata?.provider && <small>Provider: {event.metadata.provider}</small>}</div></div>)}</div></details>)}</div>
+    <AuditRawEvents events={events} />
+  </article>;
+}
+
 function Audit() {
   const location = useLocation();
 
@@ -3099,9 +3383,12 @@ function Audit() {
 
   const events = data?.data || [];
 
-  const filtered = events.filter(
-    (event) => !type || event.type === type
-  );
+  const filtered = events.filter((event) => !type || event.type === type);
+  const visibleEvents = showDemo ? filtered : filtered.filter((event) => !isDemoEvent(event));
+  const stories = buildAuditStories(visibleEvents);
+  const caseStories = stories.filter((story) => !story.isUnlinked);
+  const unlinkedStories = stories.filter((story) => story.isUnlinked);
+  const patterns = auditPatternGroups(caseStories);
 
   const eventTypes = [
     ...new Set(events.map((event) => event.type)),
@@ -3135,6 +3422,7 @@ function Audit() {
             onChange={(event) =>
               setQuery(event.target.value)
             }
+            aria-label="Filter audit events by recovery case ID"
           />
         </div>
 
@@ -3168,18 +3456,27 @@ function Audit() {
         )}
       </div>
 
+      {!loading && !error && events.length > 0 && (
+        <section className="audit-summary detail-panel">
+          <div className="panel-heading"><div><span className="eyebrow">Investigation summary</span><h2>AI advises. Policy decides. Provider confirms.</h2></div></div>
+          <div className="analysis-grid"><div><span className="field-label">Total events</span><strong>{visibleEvents.length}</strong></div><div><span className="field-label">Recovery cases</span><strong>{caseStories.length}</strong></div><div><span className="field-label">Recommendations</span><strong>{visibleEvents.filter((event) => event.type === 'ACTION_RECOMMENDED').length}</strong></div><div><span className="field-label">Policy decisions</span><strong>{visibleEvents.filter((event) => event.type === 'POLICY_EVALUATED').length}</strong></div><div><span className="field-label">Executions</span><strong>{visibleEvents.filter((event) => event.type.startsWith('ACTION_EXECUTION_')).length}</strong></div><div><span className="field-label">Razorpay recoveries</span><strong>{visibleEvents.filter((event) => event.type === 'RECOVERY_COMPLETED').length}</strong></div><div><span className="field-label">Blocked actions</span><strong>{visibleEvents.filter((event) => event.type === 'ACTION_EXECUTION_BLOCKED' || (event.type === 'POLICY_EVALUATED' && event.policyDecision === 'BLOCKED')).length}</strong></div><div><span className="field-label">Escalations</span><strong>{visibleEvents.filter((event) => event.result === 'ESCALATED_TO_HUMAN').length}</strong></div></div>
+          {patterns.length > 0 && <div className="audit-patterns"><span className="field-label">Repeated recovery patterns</span>{patterns.map((group) => <details key={`${group.action}|${group.policyReason}|${group.finalStatus}`}><summary>{label(group.action)} · {group.stories.length} case{group.stories.length === 1 ? '' : 's'}<StatusBadge value={group.finalStatus} /></summary><p>Policy: {group.policyReason}</p><div>{group.stories.map((story) => <Link key={story.key} to={`/audit?recoveryCase=${story.key}`}>{story.key}</Link>)}</div></details>)}</div>}
+          {unlinkedStories.length > 0 && <div className="audit-unlinked-note">{unlinkedStories.length} unlinked provider event{unlinkedStories.length === 1 ? '' : 's'} remain visible below and are excluded from the Recovery cases count.</div>}
+        </section>
+      )}
+
       {loading ? (
         <LoadingState text="Loading audit events" />
       ) : error ? (
         <ErrorState message={error} />
-      ) : filtered.length ? (
+      ) : visibleEvents.length ? (
         <div className="audit-list">
-          <Timeline events={showDemo ? filtered : filtered.filter((e) => !isDemoEvent(e))} groupDemo={showDemo} />
+          {stories.map((story) => <AuditStory key={story.key} story={story} />)}
         </div>
       ) : (
         <EmptyState
           icon={FileSearch}
-          title="No audit events found"
+          title="No audit events match the selected filters"
           text="Try another event type or recovery case ID."
         />
       )}
@@ -3407,6 +3704,150 @@ function Intelligence() {
             </section>
           </aside>
         </div>
+      )}
+    </>
+  );
+}
+
+function RecoveryBatch() {
+  const [status, setStatus] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.batchStatus()
+      .then((res) => setStatus(res.data))
+      .catch((err) => setError(err.message));
+  }, []);
+
+  const runBatch = async () => {
+    setRunning(true);
+    setError('');
+    setResult(null);
+    try {
+      const res = await api.runBatch(status?.maxBatchLimit || 20);
+      setResult(res.data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const summary = result?.summary;
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Operations / Batch"
+        title="Recovery Batch"
+        description="Process multiple recovery opportunities through recommendation, policy, and execution in one operation."
+        action={
+          <button
+            className="primary-button"
+            onClick={runBatch}
+            disabled={running || !status}
+          >
+            {running ? (
+              <>
+                <span className="button-spinner" /> Processing...
+              </>
+            ) : (
+              <>
+                <Zap size={15} /> Run Batch
+              </>
+            )}
+          </button>
+        }
+      />
+
+      {error && <ErrorState message={error} />}
+
+      {!status && !error && !result && <LoadingState text="Checking batch readiness" />}
+
+      <EvidenceNote>
+        A payment link being created is <strong>not</strong> recovered revenue. Recovery is counted only after provider confirmation via a verified Razorpay webhook (RECOVERY_COMPLETED).
+      </EvidenceNote>
+
+      {summary && (
+        <div className="metrics-grid">
+          <MetricCard
+            icon={AlertTriangle}
+            label="At Risk"
+            value={number(summary.atRisk)}
+            detail="Failed payment exposure"
+            tone="amber"
+          />
+          <MetricCard
+            icon={Clock3}
+            label="Pending"
+            value={number(summary.executionPending)}
+            detail="Payment links created, awaiting customer payment"
+            tone="cyan"
+          />
+          <MetricCard
+            icon={CheckCircle2}
+            label="Confirmed during batch"
+            value={number(summary.confirmedRecoveries ?? 0)}
+            detail="Provider-confirmed before this batch response"
+            tone="green"
+          />
+          <MetricCard
+            icon={ShieldCheck}
+            label="Policy Blocked"
+            value={number(summary.policyBlocked)}
+            detail="Blocked by merchant policy or stopping rules"
+            tone="danger"
+          />
+          <MetricCard
+            icon={AlertIcon}
+            label="Escalated"
+            value={number(summary.escalated)}
+            detail="Requires human review"
+            tone="amber"
+          />
+          <MetricCard
+            icon={Activity}
+            label="Processed"
+            value={number(summary.processed)}
+            detail="Cases evaluated in this batch"
+          />
+        </div>
+      )}
+
+      {result?.results && (
+        <section className="section-block">
+          <SectionHeading
+            eyebrow="Batch results"
+            title="Per-case outcomes"
+            action={<span className="muted" style={{ fontSize: '12px' }}>{result.results.length} cases</span>}
+          />
+          <div className="table-shell">
+            <table>
+              <thead>
+                <tr>
+                  <th>Case</th>
+                  <th>Status</th>
+                  <th>Recommendation</th>
+                  <th>Policy</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.results.map((r) => (
+                  <tr key={r.caseId}>
+                    <td className="mono">{r.caseId.slice(-8)}</td>
+                    <td><StatusBadge value={r.status} /></td>
+                    <td>{label(r.recommendation || '-')}</td>
+                    <td>{r.policyDecision ? label(r.policyDecision) : '-'}</td>
+                    <td className="muted">{r.reason || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </>
   );

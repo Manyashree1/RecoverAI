@@ -5,6 +5,7 @@ const { AiRecoveryAnalysisService, RECOMMENDATION_SOURCE } = require('./ai/aiRec
 const { evaluateRecoveryAction } = require('./policyEngine');
 const { RECOVERY_ACTION_STATUS, ACTOR_TYPE, AUDIT_EVENT_TYPE, POLICY_DECISION, OPEN_RECOVERY_CASE_STATUSES } = require('../constants/enums');
 const { getActionCapability } = require('../constants/actionCapabilities');
+const { classifyFailure } = require('./recoveryIntelligenceService');
 
 /**
  * Orchestrates the pipeline described in docs/architecture.md:
@@ -171,6 +172,28 @@ class RecoveryRecommendationService {
         session
       );
 
+      if (recommendation.diagnosis) {
+        await this.repository.updateRecoveryCaseDiagnosis(recoveryCase._id, {
+          category: classifyFailure(payment.failure?.code),
+          explanation: recommendation.diagnosis,
+          confidence: recommendation.confidence
+        }, session);
+        await this.repository.createAuditEvent(
+          {
+            merchant: merchantId,
+            payment: payment._id,
+            recoveryCase: recoveryCase._id,
+            recoveryAction: escalationAction._id,
+            providerEventId: `recoverai:diagnosis:${recoveryCase._id}`,
+            type: AUDIT_EVENT_TYPE.AI_DIAGNOSIS_RECORDED,
+            actor: ACTOR_TYPE.SYSTEM,
+            reason: 'Diagnosis recorded from AI/fallback recommendation.',
+            result: 'DIAGNOSED'
+          },
+          session
+        );
+      }
+
       return {
         duplicate: false,
         escalated: true,
@@ -292,6 +315,28 @@ class RecoveryRecommendationService {
       },
       session
     );
+
+    if (recommendation.diagnosis) {
+      await this.repository.updateRecoveryCaseDiagnosis(recoveryCase._id, {
+        category: classifyFailure(payment.failure?.code),
+        explanation: recommendation.diagnosis,
+        confidence: recommendation.confidence
+      }, session);
+      await this.repository.createAuditEvent(
+        {
+          merchant: merchantId,
+          payment: payment._id,
+          recoveryCase: recoveryCase._id,
+          recoveryAction: recoveryAction._id,
+          providerEventId: `recoverai:diagnosis:${recoveryCase._id}`,
+          type: AUDIT_EVENT_TYPE.AI_DIAGNOSIS_RECORDED,
+          actor: ACTOR_TYPE.SYSTEM,
+          reason: 'Diagnosis recorded from AI/fallback recommendation.',
+          result: 'DIAGNOSED'
+        },
+        session
+      );
+    }
 
     return {
       duplicate: false,

@@ -124,3 +124,40 @@ test('a repeated new recovery attempt is idempotent and unsupported actions rema
   assert.equal(store.recoveryActions.length, 2);
   assert.equal(require('../src/services/policyEngine').evaluateRecoveryAction({ policy: store.policies[0], payment: store.payments[0], recoveryCase: store.recoveryCases[0], recommendation: { type: 'RETRY_PAYMENT', confidence: 0.95 } }).decision, 'BLOCKED');
 });
+
+test('a valid recommendation persists diagnosis onto the recovery case and emits AI_DIAGNOSIS_RECORDED', async () => {
+  const { store, service } = createService({ primaryProvider: validResponseProvider() });
+  store.payments.push(buildPayment({ _id: 'p_diag', merchant: 'm_diag', amount: 50000, failure: { code: 'insufficient_funds' } }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'c_diag', merchant: 'm_diag', payment: 'p_diag', retryCount: 0 }));
+
+  const result = await service.generateRecommendation({ merchantId: 'm_diag', recoveryCaseId: 'c_diag' });
+
+  assert.equal(result.duplicate, false);
+  const updatedCase = store.recoveryCases.find((c) => String(c._id) === 'c_diag');
+  assert.ok(updatedCase.diagnosis, 'RecoveryCase.diagnosis must be persisted');
+  assert.equal(updatedCase.diagnosis.category, 'TEMPORARY');
+  assert.equal(updatedCase.diagnosis.explanation, 'Likely a temporary payment failure.');
+  assert.equal(updatedCase.diagnosis.confidence, 0.9);
+
+  const diagnosisEvent = store.auditEvents.find((e) => e.type === 'AI_DIAGNOSIS_RECORDED' && String(e.recoveryCase) === 'c_diag');
+  assert.ok(diagnosisEvent, 'AI_DIAGNOSIS_RECORDED audit event must be created');
+  assert.equal(diagnosisEvent.actor, 'SYSTEM');
+  assert.equal(diagnosisEvent.result, 'DIAGNOSED');
+});
+
+test('a recommendation without diagnosis falls back to deterministic and still persists diagnosis', async () => {
+  const { store, service } = createService({ primaryProvider: validResponseProvider({ diagnosis: undefined }) });
+  store.payments.push(buildPayment({ _id: 'p_nodiag', merchant: 'm_nodiag', amount: 50000, failure: { code: 'insufficient_funds' } }));
+  store.recoveryCases.push(buildRecoveryCase({ _id: 'c_nodiag', merchant: 'm_nodiag', payment: 'p_nodiag', retryCount: 0 }));
+
+  await service.generateRecommendation({ merchantId: 'm_nodiag', recoveryCaseId: 'c_nodiag' });
+
+  const updatedCase = store.recoveryCases.find((c) => String(c._id) === 'c_nodiag');
+  assert.ok(updatedCase.diagnosis, 'RecoveryCase.diagnosis must be persisted from fallback');
+  assert.equal(updatedCase.diagnosis.category, 'TEMPORARY');
+
+  const diagnosisEvent = store.auditEvents.find((e) => e.type === 'AI_DIAGNOSIS_RECORDED' && String(e.recoveryCase) === 'c_nodiag');
+  assert.ok(diagnosisEvent, 'AI_DIAGNOSIS_RECORDED audit event must be created from fallback');
+  assert.equal(diagnosisEvent.actor, 'SYSTEM');
+  assert.equal(diagnosisEvent.result, 'DIAGNOSED');
+});

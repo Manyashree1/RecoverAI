@@ -43,6 +43,17 @@ class RecoveryRecommendationRepository {
     const [event] = await AuditEvent.create([data], { session });
     return event;
   }
+
+  async updateRecoveryCaseDiagnosis(recoveryCaseId, diagnosis, session) {
+    const update = {
+      diagnosis: {
+        category: diagnosis.category,
+        explanation: diagnosis.explanation,
+        confidence: diagnosis.confidence
+      }
+    };
+    await RecoveryCase.updateOne({ _id: recoveryCaseId }, update, { session });
+  }
 }
 
 module.exports = { RecoveryRecommendationRepository };

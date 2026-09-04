@@ -247,6 +247,14 @@ class InMemoryRecoveryRecommendationRepository {
     this.store.auditEvents.push(event);
     return event;
   }
+
+  async updateRecoveryCaseDiagnosis(recoveryCaseId, diagnosis) {
+    const recoveryCase = this.store.recoveryCases.find((c) => String(c._id) === String(recoveryCaseId));
+    if (recoveryCase) {
+      recoveryCase.diagnosis = { ...diagnosis };
+    }
+    return recoveryCase;
+  }
 }
 
 class InMemoryTransactionRunner {

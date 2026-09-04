@@ -357,7 +357,7 @@ test('recovery recommendation generation', async (t) => {
     const response = await fetch(`${baseUrl}/api/audit-events?recoveryCase=case_audit`, { headers: { authorization: `Bearer ${token}` } });
     const body = await response.json();
     const types = body.data.map((event) => event.type).sort();
-    assert.deepEqual(types, ['ACTION_RECOMMENDED', 'AI_FALLBACK_USED', 'POLICY_EVALUATED']);
+    assert.deepEqual(types, ['ACTION_RECOMMENDED', 'AI_DIAGNOSIS_RECORDED', 'AI_FALLBACK_USED', 'POLICY_EVALUATED']);
   });
 
   await t.test('re-generating a recommendation for an unchanged case is idempotent', async () => {
@@ -376,7 +376,7 @@ test('recovery recommendation generation', async (t) => {
 
     const auditResponse = await fetch(`${baseUrl}/api/audit-events?recoveryCase=case_idem`, { headers: { authorization: `Bearer ${token}` } });
     const auditBody = await auditResponse.json();
-    assert.equal(auditBody.data.length, 3); // no duplicate audit trail on the repeat call
+    assert.equal(auditBody.data.length, 4); // no duplicate audit trail on the repeat call
   });
 
   await t.test('requesting a recommendation for a nonexistent case returns 404', async () => {

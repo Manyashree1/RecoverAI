@@ -1,14 +1,28 @@
 const { AppError } = require('../../utils/AppError');
 
-/**
- * Boundary for Razorpay TEST MODE. The application must call this adapter, not
- * the SDK directly. Network execution is paired with webhook verification and
- * an idempotent action-execution workflow in recoveryExecutionService.js.
- */
+const DEFAULT_TIMEOUT_MS = 30000;
+const MAX_RETRIES = 2;
+const RETRY_DELAYS_MS = [1000, 3000];
+
+function isRetryableStatus(status) {
+  return !status || status === 502 || status === 503 || status === 504;
+}
+
+function retryable(error) {
+  if (error?.name === 'AbortError') return true;
+  if (error instanceof AppError && isRetryableStatus(error.statusCode)) return true;
+  return false;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class RazorpayTestClient {
-  constructor({ keyId, keySecret }) {
+  constructor({ keyId, keySecret, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     this.keyId = keyId;
     this.keySecret = keySecret;
+    this.timeoutMs = timeoutMs;
   }
 
   assertConfigured() {
@@ -17,10 +31,10 @@ class RazorpayTestClient {
     }
   }
 
-  async fetchPaymentLink({ paymentLinkId }) {
+  async fetchPaymentLink(paymentLinkId, attempt = 1) {
     this.assertConfigured();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await fetch(`https://api.razorpay.com/v1/payment_links/${encodeURIComponent(paymentLinkId)}`, {
         method: 'GET',
@@ -44,7 +58,11 @@ class RazorpayTestClient {
         providerPaymentId: body.payments?.items?.[0]?.id || body.payments?.items?.[0]?.payment_id || body.payments?.items?.[0]?.payment?.id || null
       };
     } catch (error) {
-      if (error.name === 'AbortError') throw new AppError('Razorpay payment-link lookup timed out.', 504);
+      if (attempt < MAX_RETRIES && retryable(error)) {
+        await sleep(RETRY_DELAYS_MS[attempt - 1]);
+        return this.fetchPaymentLink(paymentLinkId, attempt + 1);
+      }
+      if (error.name === 'AbortError') throw new AppError(`Razorpay payment-link lookup timed out after ${this.timeoutMs}ms. Check network connectivity and retry.`, 504);
       if (error instanceof AppError) throw error;
       throw new AppError('Razorpay payment-link lookup failed.', 502);
     } finally {
@@ -52,10 +70,10 @@ class RazorpayTestClient {
     }
   }
 
-  async createRecoveryPaymentLink({ amount, currency, referenceId, customer }) {
+  async createRecoveryPaymentLink({ amount, currency, referenceId, customer }, attempt = 1) {
     this.assertConfigured();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await fetch('https://api.razorpay.com/v1/payment_links', {
         method: 'POST',
@@ -81,7 +99,11 @@ class RazorpayTestClient {
       }
       return { providerReference: body.id, shortUrl: body.short_url, status: body.status };
     } catch (error) {
-      if (error.name === 'AbortError') throw new AppError('Razorpay payment-link request timed out.', 504);
+      if (attempt < MAX_RETRIES && retryable(error)) {
+        await sleep(RETRY_DELAYS_MS[attempt - 1]);
+        return this.createRecoveryPaymentLink({ amount, currency, referenceId, customer }, attempt + 1);
+      }
+      if (error.name === 'AbortError') throw new AppError(`Razorpay payment-link request timed out after ${this.timeoutMs}ms. Check network connectivity and retry.`, 504);
       if (error instanceof AppError) throw error;
       throw new AppError('Razorpay payment-link request failed.', 502);
     } finally {

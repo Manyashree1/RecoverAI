@@ -1,0 +1,39 @@
+{
+  "snapshotId": "non-demo-cleanup-2026-09-03T17-00-54-368Z",
+  "timestamp": "2026-09-03T17:00:54.374Z",
+  "database": "recoverai",
+  "records": [
+    {
+      "caseId": "6a99238caebe84a47083ede9",
+      "paymentId": "6a99238caebe84a47083ede7",
+      "merchantId": "6a99238baebe84a47083ed72",
+      "actionCount": 0,
+      "auditCount": 0,
+      "snapshotFile": "C:\\Users\\LENOVO\\OneDrive\\Documents\\RecoverAI\\scripts\\demo-reset-backups\\non-demo-cleanup-2026-09-03T17-00-54-368Z\\non-demo-cleanup\\6a99238caebe84a47083ede9.json"
+    },
+    {
+      "caseId": "6a99239b320e0f2447c5e86e",
+      "paymentId": "6a99239b320e0f2447c5e86c",
+      "merchantId": "6a99239a320e0f2447c5e858",
+      "actionCount": 0,
+      "auditCount": 0,
+      "snapshotFile": "C:\\Users\\LENOVO\\OneDrive\\Documents\\RecoverAI\\scripts\\demo-reset-backups\\non-demo-cleanup-2026-09-03T17-00-54-368Z\\non-demo-cleanup\\6a99239b320e0f2447c5e86e.json"
+    },
+    {
+      "caseId": "6a99239b320e0f2447c5e879",
+      "paymentId": "6a99239b320e0f2447c5e877",
+      "merchantId": "6a99239a320e0f2447c5e85c",
+      "actionCount": 0,
+      "auditCount": 0,
+      "snapshotFile": "C:\\Users\\LENOVO\\OneDrive\\Documents\\RecoverAI\\scripts\\demo-reset-backups\\non-demo-cleanup-2026-09-03T17-00-54-368Z\\non-demo-cleanup\\6a99239b320e0f2447c5e879.json"
+    },
+    {
+      "caseId": "6a99239b320e0f2447c5e880",
+      "paymentId": "6a99239b320e0f2447c5e87e",
+      "merchantId": "6a99239a320e0f2447c5e858",
+      "actionCount": 0,
+      "auditCount": 0,
+      "snapshotFile": "C:\\Users\\LENOVO\\OneDrive\\Documents\\RecoverAI\\scripts\\demo-reset-backups\\non-demo-cleanup-2026-09-03T17-00-54-368Z\\non-demo-cleanup\\6a99239b320e0f2447c5e880.json"
+    }
+  ]
+}

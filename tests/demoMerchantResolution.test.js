@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { selectUnboundDemoMerchant } = require('../src/repositories/razorpayWebhookRepository');
 
 test('selects the sole unbound demo merchant as the HMAC-verified fallback', () => {
-  const merchant = { _id: 'm1', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' };
+  const merchant = { _id: 'm1', slug: 'recoverai-demo', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' };
   assert.equal(selectUnboundDemoMerchant([merchant]), merchant);
 });
 

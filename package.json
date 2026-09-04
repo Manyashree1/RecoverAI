@@ -10,7 +10,8 @@
     "check": "node --check src/server.js && node --check src/services/analyticsService.js && node --check src/repositories/analyticsRepository.js && node --check src/controllers/analyticsController.js && node --check src/routes/analyticsRoutes.js && node --check scripts/seedDemoData.js && node --check src/services/recoveryExecutionService.js && node --check src/services/razorpay/razorpayTestClient.js && node --check src/app.js && node --check src/services/batchRecoveryService.js && node --check src/controllers/batchRecoveryController.js && node --check src/routes/batchRecoveryRoutes.js && node --check src/middleware/rateLimiter.js && node --check scripts/demo.js",
     "test": "set NODE_ENV=test&&node --test --test-concurrency=1 --test-timeout=30000",
     "seed:demo": "node scripts/seedDemoData.js",
-    "demo": "node scripts/demo.js"
+    "demo": "node scripts/demo.js",
+    "cleanup:non-demo": "node scripts/cleanupNonDemo.js"
   },
   "engines": {
     "node": ">=20"

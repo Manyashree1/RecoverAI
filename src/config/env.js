@@ -2,10 +2,20 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+function resolveTestMongoUri(baseUri) {
+  if (!baseUri) return 'mongodb://127.0.0.1:27017/recoverai_test';
+  const match = baseUri.match(/^(mongodb:\/\/[^/]+\/)([^?]+)(\?.*)?$/);
+  if (match) {
+    return `${match[1]}${match[2]}_test${match[3] || ''}`;
+  }
+  return `${baseUri}_test`;
+}
+
 const env = Object.freeze({
   nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT || 3000),
   mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/recoverai',
+  testMongoUri: resolveTestMongoUri(process.env.MONGODB_URI),
   razorpayKeyId: process.env.RAZORPAY_KEY_ID,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET,
   razorpayAccountId: process.env.RAZORPAY_ACCOUNT_ID,

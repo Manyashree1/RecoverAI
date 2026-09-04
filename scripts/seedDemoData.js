@@ -62,19 +62,41 @@ async function main() {
   if (!password) throw new Error('Set DEMO_ADMIN_PASSWORD before running the development demo seed.');
   await connectDatabase();
   try {
-    const merchant = await Merchant.findOneAndUpdate(
-      { name: 'RecoverAI Demo Merchant' },
-      { name: 'RecoverAI Demo Merchant', status: 'ACTIVE', ...(process.env.RAZORPAY_ACCOUNT_ID ? { razorpayAccountId: process.env.RAZORPAY_ACCOUNT_ID.trim() } : {}) },
-      { upsert: true, new: true }
-    );
+    const DEMO_SLUG = 'recoverai-demo';
+    const DEMO_NAME = 'RecoverAI Demo Merchant';
+    const DEMO_EMAIL = 'demo@recoverai.test';
+
+    let merchant = await Merchant.findOne({ slug: DEMO_SLUG }).lean();
+    if (!merchant) {
+      const byName = await Merchant.find({ name: DEMO_NAME }).lean();
+      if (byName.length > 1) {
+        throw new Error(`Multiple merchants named "${DEMO_NAME}" found. Resolve duplicates before seeding.`);
+      }
+      if (byName.length === 1) {
+        merchant = byName[0];
+        await Merchant.updateOne({ _id: merchant._id }, { slug: DEMO_SLUG });
+      }
+    }
+    if (!merchant) {
+      merchant = await Merchant.create({ slug: DEMO_SLUG, name: DEMO_NAME, status: 'ACTIVE' });
+    }
+
+    const merchantId = merchant._id;
+
     await RecoveryPolicy.findOneAndUpdate(
-      { merchant: merchant._id },
-      { merchant: merchant._id, ...DEMO_POLICY_CONFIG },
+      { merchant: merchantId },
+      { merchant: merchantId, ...DEMO_POLICY_CONFIG },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+
+    const existingUser = await MerchantUser.findOne({ email: DEMO_EMAIL }).lean();
+    if (existingUser && String(existingUser.merchant) !== String(merchantId)) {
+      throw new Error(`Demo user ${DEMO_EMAIL} is linked to merchant ${existingUser.merchant}, expected ${merchantId}. Merchant identity conflict.`);
+    }
+
     const hash = await new AuthService().hashPassword(password);
-    await MerchantUser.findOneAndUpdate({ email: 'demo@recoverai.test' }, { merchant: merchant._id, email: 'demo@recoverai.test', passwordHash: hash, role: 'MERCHANT_ADMIN', status: 'ACTIVE' }, { upsert: true, new: true });
-    const customer = await Customer.findOneAndUpdate({ merchant: merchant._id, externalCustomerId: 'demo_customer' }, { merchant: merchant._id, externalCustomerId: 'demo_customer', email: 'customer@demo.test', phone: '+919900000001' }, { upsert: true, new: true });
+    await MerchantUser.findOneAndUpdate({ email: DEMO_EMAIL }, { merchant: merchantId, email: DEMO_EMAIL, passwordHash: hash, role: 'MERCHANT_ADMIN', status: 'ACTIVE' }, { upsert: true, new: true });
+    const customer = await Customer.findOneAndUpdate({ merchant: merchantId, externalCustomerId: 'demo_customer' }, { merchant: merchantId, externalCustomerId: 'demo_customer', email: 'customer@demo.test', phone: '+919900000001' }, { upsert: true, new: true });
 
     let processed = 0;
     let created = 0;
@@ -109,12 +131,12 @@ async function main() {
       }
 
       const payment = await Payment.findOneAndUpdate(
-        { razorpayPaymentId: `demo_${row.id}` },
+        { merchant: merchant._id, razorpayPaymentId: `demo_${row.id}` },
         { merchant: merchant._id, customer: customer._id, razorpayPaymentId: `demo_${row.id}`, amount: row.amount, currency: 'INR', status: 'FAILED', failure: { code: row.code, description: `Development demo ${row.code}` }, attemptCount: 1 },
         { upsert: true, new: true }
       );
       const recoveryCase = await RecoveryCase.findOneAndUpdate(
-        { payment: payment._id },
+        { merchant: merchant._id, payment: payment._id },
         { merchant: merchant._id, payment: payment._id, status: 'DETECTED', retryCount: row.retryCount || 0, customerContactAttempts: row.contactCount || 0, recoveredAmount: 0 },
         { upsert: true, new: true }
       );

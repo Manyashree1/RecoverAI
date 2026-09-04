@@ -1,6 +1,6 @@
 # RecoverAI Architecture
 
-One diagram, kept current as increments land. Every stage after the AI box is deterministic, application-owned, and independently testable — the AI stage is advisory only.
+One diagram, kept current. Every stage after the AI box is deterministic, application-owned, and independently testable — the AI stage is advisory only.
 
 ```text
  Razorpay (TEST MODE)
@@ -65,7 +65,7 @@ The AI provider (or its deterministic fallback) only ever produces a `{action, c
 | --- | --- | --- |
 | AI provider / fallback | Classifying the failure, recommending one action, explaining why | Read/write the database, call Razorpay, see secrets |
 | `recommendationSchema` | Rejecting malformed/unsafe AI output | Cannot be bypassed — the orchestrator never uses unvalidated output |
-| `policyEngine` (unchanged since Increment 03) | ALLOW/BLOCK against merchant-defined limits | Cannot be influenced by AI confidence alone; every numeric limit is a separate, explicit check |
+| `policyEngine` (deterministic) | ALLOW/BLOCK against merchant-defined limits | Cannot be influenced by AI confidence alone; every numeric limit is a separate, explicit check |
 | Execution service | Revalidating policy, atomically reserving an allowed action, and calling the TEST payment-link adapter | Cannot retry the original payment, mark revenue recovered, or execute unsupported actions |
 
 ## Measurement ownership

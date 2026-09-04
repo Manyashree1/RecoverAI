@@ -39,7 +39,14 @@ import {
   Zap,
 } from 'lucide-react';
 
-import { api, clearSession, getToken, getUser, saveSession } from './api';
+import {
+  api,
+  apiFetch,
+  clearSession,
+  getToken,
+  getUser,
+  saveSession,
+} from './api';
 import { currency, dateTime, failureCategory, label, number, percent } from './utils';
 import {
   EmptyState,

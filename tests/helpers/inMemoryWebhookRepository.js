@@ -24,7 +24,7 @@ class InMemoryWebhookRepository {
     // Mirrors production: HMAC is verified by the controller, so resolve the
     // single unbound demo merchant so recovery works before an account id is
     // configured on the merchant.
-    const demo = this.state.merchants.filter((merchant) => merchant.name === 'RecoverAI Demo Merchant' && merchant.status === 'ACTIVE');
+    const demo = this.state.merchants.filter((merchant) => merchant.slug === 'recoverai-demo' && merchant.status === 'ACTIVE');
     if (demo.length === 1 && !demo[0].razorpayAccountId) return demo[0];
     return null;
   }

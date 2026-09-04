@@ -14,11 +14,10 @@ const { getActionCapability } = require('../constants/actionCapabilities');
  *                 -> Deterministic Policy Engine -> ALLOW/BLOCK
  *                 -> RecoveryAction -> Audit trail
  *
- * It stops there. Neither the AI stage nor `evaluateRecoveryAction` ever
- * calls the Razorpay client, and this service never marks a RecoveryAction
- * executed -- `evaluateRecoveryAction` only records whether the
- * recommendation *would* be authorized. Bounded execution remains a
- * separate, later increment by design (see README).
+  * It stops there. Neither the AI stage nor `evaluateRecoveryAction` ever
+  * calls the Razorpay client, and this service never marks a RecoveryAction
+  * executed. Execution is a separate bounded service that revalidates policy
+  * before calling the Razorpay TEST adapter.
  */
 class RecoveryRecommendationService {
   constructor({

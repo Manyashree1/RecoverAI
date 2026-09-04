@@ -28,7 +28,7 @@ Build command: `npm run build` · Publish directory: `dist`
 
 ## Steps
 
-1. **Push this repository to GitHub** (already at `github.com/Manyashree1/RecoverAI`). Confirm `.env` is gitignored.
+1. **Push this repository to GitHub.** Confirm `.env` is gitignored.
 2. **Render → New → Web Service**, connect the repo:
    - Build command: `npm install`
    - Start command: `npm start`

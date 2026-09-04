@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const mongoose = require('mongoose');
-const { connectDatabase } = require('../src/config/database');
+const { connectDatabase, assertTestDatabase } = require('../src/config/database');
 const { AuthService } = require('../src/services/authService');
 const Merchant = require('../src/models/Merchant');
 const MerchantUser = require('../src/models/MerchantUser');
@@ -31,6 +31,7 @@ function mockRes() {
 
 test.before(async () => {
   await connectDatabase();
+  assertTestDatabase();
   await Merchant.deleteMany({});
   await MerchantUser.deleteMany({});
   await mongoose.connection.db.collection('customers').deleteMany({});

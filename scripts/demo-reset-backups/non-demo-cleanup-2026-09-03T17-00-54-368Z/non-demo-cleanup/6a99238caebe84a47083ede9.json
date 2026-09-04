@@ -1,0 +1,21 @@
+{
+  "caseId": "6a99238caebe84a47083ede9",
+  "caseStatus": "RECOVERED",
+  "caseRecoveredAmount": 5000,
+  "caseCreatedAt": "2026-09-03T07:36:44.603Z",
+  "caseUpdatedAt": "2026-09-03T07:36:44.603Z",
+  "paymentId": "6a99238caebe84a47083ede7",
+  "paymentReference": "unknown",
+  "paymentStatus": "FAILED",
+  "paymentAmount": 5000,
+  "paymentCurrency": "INR",
+  "merchantId": "6a99238baebe84a47083ed72",
+  "merchantName": "N/A",
+  "merchantSlug": "N/A",
+  "actions": [],
+  "audits": [],
+  "safety": {
+    "verdict": "SAFE TO DELETE",
+    "reason": "No merchant slug, no payment reference, no actions, no audits, created in test batch. Clearly synthetic test data."
+  }
+}

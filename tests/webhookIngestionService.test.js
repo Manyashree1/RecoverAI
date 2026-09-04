@@ -263,7 +263,7 @@ test('payment_link.paid for a single unbound demo merchant resolves and recovers
   const { repository, service } = createService();
   // One ACTIVE demo merchant with no bound account id; payload account_id does
   // not match any configured merchant. HMAC was verified by the controller.
-  repository.state.merchants = [{ _id: 'merchant_demo', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }];
+  repository.state.merchants = [{ _id: 'merchant_demo', slug: 'recoverai-demo', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }];
   repository.state.payments.push({ _id: 'payment_recovery_001', merchant: 'merchant_demo', amount: 75000, currency: 'INR', status: 'FAILED', failure: { code: 'insufficient_funds' } });
   repository.state.recoveryCases.push({ _id: 'case_recovery_001', merchant: 'merchant_demo', payment: 'payment_recovery_001', status: 'ACTION_PENDING', recoveredAmount: 0, retryCount: 0, customerContactAttempts: 1 });
   repository.state.recoveryActions.push({ _id: 'action_001', merchant: 'merchant_demo', payment: 'payment_recovery_001', recoveryCase: 'case_recovery_001', type: 'CUSTOMER_REMINDER', status: 'EXECUTED', execution: { provider: 'RAZORPAY_TEST', providerReference: 'plink_001', result: 'PAYMENT_LINK_CREATED' } });
@@ -292,8 +292,8 @@ test('payment_link.paid for a single unbound demo merchant resolves and recovers
 test('an unbound demo merchant is not resolved when more than one demo merchant exists', async () => {
   const { repository, service } = createService();
   repository.state.merchants = [
-    { _id: 'merchant_demo_a', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' },
-    { _id: 'merchant_demo_b', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }
+    { _id: 'merchant_demo_a', slug: 'recoverai-demo', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' },
+    { _id: 'merchant_demo_b', slug: 'recoverai-demo', name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }
   ];
 
   // Ambiguous -> no merchant resolved -> 503 so Razorpay retries after repair.

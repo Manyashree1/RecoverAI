@@ -10,6 +10,7 @@ const RecoveryCase = require('../src/models/RecoveryCase');
 const RecoveryAction = require('../src/models/RecoveryAction');
 const AuditEvent = require('../src/models/AuditEvent');
 const { RecoveryPolicy } = require('../src/models/RecoveryPolicy');
+const { assertTestDatabase } = require('../src/config/database');
 
 test('demo seed configures a bounded multi-action policy', () => {
   assert.deepEqual(DEMO_POLICY_CONFIG.allowedActions, ['CUSTOMER_REMINDER', 'RETRY_PAYMENT', 'PAYMENT_METHOD_UPDATE']);
@@ -111,7 +112,7 @@ test('demo seed does not fabricate AI provenance', async () => {
 
   await connectDatabase();
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -138,7 +139,7 @@ test('demo seed does not fabricate recovered revenue or provider evidence', asyn
   await connectDatabase();
   let merchantId = null;
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -176,7 +177,7 @@ test('demo seed is idempotent across multiple runs', async () => {
   await connectDatabase();
   let merchantId = null;
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -258,7 +259,7 @@ test('Test A: genuine recovery survives reseeding', async () => {
   await connectDatabase();
   let merchantId = null;
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -323,7 +324,7 @@ test('Test B: seed never fabricates recovery on fresh database', async () => {
   await connectDatabase();
   let merchantId = null;
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -361,7 +362,7 @@ test('Test C: repeated seed does not downgrade genuine recovery', async () => {
   await connectDatabase();
   let merchantId = null;
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -428,7 +429,7 @@ test('Test D: payment-link creation is not recovery', async () => {
   await connectDatabase();
   let merchantId = null;
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -489,7 +490,7 @@ test('Test E: analytics remains provider-evidence gated', async () => {
   await connectDatabase();
   let merchantId = null;
   try {
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' });
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' });
     if (!merchant) {
       await mongoose.disconnect();
       return;
@@ -552,6 +553,7 @@ test('Test E: analytics remains provider-evidence gated', async () => {
 });
 
 async function cleanDemoData(merchantId) {
+  assertTestDatabase();
   const payments = await Payment.find({ merchant: merchantId, razorpayPaymentId: { $regex: /^demo_/ } }).lean();
   const paymentIds = payments.map((p) => p._id);
 

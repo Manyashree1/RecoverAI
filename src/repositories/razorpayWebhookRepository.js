@@ -28,7 +28,7 @@ class RazorpayWebhookRepository {
     // merchant-scoped. Once razorpayAccountId is configured (e.g. via
     // RAZORPAY_ACCOUNT_ID + seed), the exact match above is authoritative and
     // this fallback stops applying.
-    const demoMerchants = await Merchant.find({ name: 'RecoverAI Demo Merchant', status: 'ACTIVE' }).session(session);
+    const demoMerchants = await Merchant.find({ slug: 'recoverai-demo', status: 'ACTIVE' }).session(session);
     return selectUnboundDemoMerchant(demoMerchants);
   }
 

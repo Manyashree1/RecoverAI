@@ -110,7 +110,7 @@ async function checkDemoMerchant() {
     const Merchant = require('../src/models/Merchant');
     const RecoveryCase = require('../src/models/RecoveryCase');
     await connectDatabase();
-    const merchant = await Merchant.findOne({ name: 'RecoverAI Demo Merchant' }).lean();
+    const merchant = await Merchant.findOne({ slug: 'recoverai-demo' }).lean();
     if (!merchant) {
       log('fail', 'Demo merchant not found');
       CHECKS.push({ name: 'DemoMerchant', status: 'fail', error: 'Not found' });

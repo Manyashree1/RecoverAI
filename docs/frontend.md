@@ -29,7 +29,7 @@ Open `http://localhost:5173/login`. The Vite development server proxies `/api` t
 - `/payments/:id` loads a payment and links it to a recovery case when the existing case list contains one.
 - `/recovery-cases` lists cases using `GET /api/recovery-cases`.
 - `/recovery-cases/:id` loads the populated case/payment record, audit events, and can invoke the existing recommendation endpoint.
-- `/recovery-actions` visualizes the action breakdown returned by analytics and explains the recommendation/authorization/execution boundary. The current backend has no standalone action listing endpoint, so this screen does not invent one.
+- `/recovery-actions` lists the merchant's recovery actions using `GET /api/recovery-actions`, showing execution evidence, policy decisions, and provider references.
 - `/audit` loads the merchant's audit events using `GET /api/audit-events` with case and event-type filters.
 - `/recovery-batch` runs a bounded batch recovery operation using `POST /api/recovery-batch/run`, showing at-risk/pending/recovered breakdown.
 

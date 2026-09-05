@@ -332,7 +332,7 @@ The raw payload and request headers are intentionally not stored or logged. The 
 npm test
 ```
 
-Runs 213 tests covering webhook security, idempotency, state transitions, policy enforcement, recovery execution, analytics truth, AI fallback, and database safety.
+Runs all tests covering webhook security, idempotency, state transitions, policy enforcement, recovery execution, analytics truth, AI fallback, and database safety.
 
 ```bash
 npm run check

@@ -153,21 +153,17 @@ function calculatePerformance({ payments = [], recoveryCases = [], recoveryActio
     }
   }
 
-  let cumulativeRecovered = 0;
-  let cumulativeOpportunities = 0;
-  const series = Object.entries(daily)
-    .map(([day, values]) => {
-      cumulativeRecovered += values.recoveredCount;
-      cumulativeOpportunities += values.opportunityCount;
-      return {
-        day,
-        eligibleCount: values.eligibleCount,
-        recoveredCount: values.recoveredCount,
-        recoveredAmount: values.recoveredAmount,
-        recoveryRate: rate(cumulativeRecovered, cumulativeOpportunities)
-      };
-    })
-    .sort((a, b) => a.day.localeCompare(b.day));
+  const sortedDays = Object.keys(daily).sort();
+  const series = sortedDays.map((day) => {
+    const values = daily[day];
+    return {
+      day,
+      eligibleCount: values.eligibleCount,
+      recoveredCount: values.recoveredCount,
+      recoveredAmount: values.recoveredAmount,
+      recoveryRate: values.opportunityCount > 0 ? rate(values.recoveredCount, values.opportunityCount) : null
+    };
+  });
 
   const totalRecovered = recoveredCases.length;
   const totalRecoveredAmount = sum(recoveredCases.map((recoveryCase) => recoveryCase.recoveredAmount));

@@ -332,7 +332,7 @@ The raw payload and request headers are intentionally not stored or logged. The 
 npm test
 ```
 
-Runs 211 tests covering webhook security, idempotency, state transitions, policy enforcement, recovery execution, analytics truth, AI fallback, and database safety.
+Runs 213 tests covering webhook security, idempotency, state transitions, policy enforcement, recovery execution, analytics truth, AI fallback, and database safety.
 
 ```bash
 npm run check
@@ -364,15 +364,12 @@ Tests use a dedicated `recoverai_test` database and include a safety guard that 
 
 * Only one real AI provider (`anthropic`) is implemented; the abstraction supports more.
 
-* `RecoveryCase.diagnosis` is not yet persisted onto the case record; it appears in audit event metadata and the recommendation API response.
-
 * Standard Razorpay webhooks can be delayed, duplicated, or out of order. The service guards supported state transitions but does not yet monitor unprocessed delivery failures.
 
 * MongoDB transactions require a replica set. The application supports a safe direct-write fallback when transactions are unavailable.
 
 ## Future Work
 
-* Populate `RecoveryCase.diagnosis` from the AI/fallback diagnosis field.
 
 * Add monitoring for unprocessed webhook delivery failures.
 
